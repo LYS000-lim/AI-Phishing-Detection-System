@@ -1,0 +1,27 @@
+Decision Tree - Test Set Evaluation
+==================================================
+Best hyperparameters: {'criterion': 'gini', 'max_depth': 5, 'min_samples_leaf': 1, 'min_samples_split': 2}
+
+Accuracy                    : 1.0000
+Precision (phishing=0)      : 1.0000
+Recall (phishing=0)         : 1.0000
+F1 (phishing=0)             : 1.0000
+Precision (legit=1)         : 1.0000
+Recall (legit=1)            : 1.0000
+F1 (legit=1)                : 1.0000
+
+Classification report:
+                precision    recall  f1-score   support
+
+  Phishing (0)       1.00      1.00      1.00     20028
+Legitimate (1)       1.00      1.00      1.00     26970
+
+      accuracy                           1.00     46998
+     macro avg       1.00      1.00      1.00     46998
+  weighted avg       1.00      1.00      1.00     46998
+
+==================================================
+Ablation: Decision Tree WITHOUT URLSimilarityIndex
+(robustness check - see code comments)
+Accuracy: 0.9988
+F1-score: 0.9989
