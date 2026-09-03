@@ -1,4 +1,3 @@
-
 from typing import List, Optional
 
 import numpy as np
@@ -17,6 +16,10 @@ from .schemas import (
     BatchRequest, DetectionOut, PasswordChange, ProfileUpdate,
     URLRequest, UserOut,
 )
+
+from .features import FEATURE_ORDER, extract_features, feature_vector
+from .ml_state import get_lime_explainer, get_shap_explainer, model_info, MODEL
+from .phishing_type import detect_phishing_type
 
 router = APIRouter(tags=["user"])
 
@@ -83,6 +86,16 @@ def _predict_and_log(
     prediction = "phishing" if label == 1 else "legitimate"
     risk = risk_level(p_phish)
 
+    features = extract_features(url)
+
+    attack_type = None
+
+    if prediction == "phishing":
+        attack_type = detect_phishing_type(
+            url,
+            features
+        )
+
     record = Detection(
         user_id=user.id,
         url=url,
@@ -109,6 +122,7 @@ def _predict_and_log(
         "risk_level": risk,
         "model_used": model_info()["name"],
         "features": extract_features(url),
+        "attack_type": attack_type,
         "created_at": record.created_at.isoformat(),
     }
 

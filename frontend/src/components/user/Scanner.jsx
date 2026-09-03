@@ -87,6 +87,22 @@ export default function Scanner() {
             <span>Confidence: <b>{(result.confidence * 100).toFixed(1)}%</b></span>
           </div>
 
+          {result.attack_type && (
+            <div className="attack-box">
+              <h4>Phishing Attack Type</h4>
+
+              <p>
+                <b>{result.attack_type.category}</b>
+              </p>
+
+              <ul>
+                {result.attack_type.reason.map((r, index) => (
+                  <li key={index}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {result.matched_domain && (
             <div className="trusted-banner">
               <b>Trusted domain allowlist:</b> matched
