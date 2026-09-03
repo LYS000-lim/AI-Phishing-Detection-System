@@ -1,5 +1,3 @@
-"""Auth endpoints: register, login, current user."""
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 

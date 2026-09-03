@@ -1,11 +1,3 @@
-"""
-Human-facing explanation helpers.
-
-- risk_level(): maps phishing probability to Low / Medium / High
-- plain_text_explanation(): turns the top SHAP contributions into a
-  short paragraph the user can actually read on the result card
-"""
-
 from typing import Iterable
 
 # Friendly, non-technical names for the URL features shown on the UI.

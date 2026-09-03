@@ -1,11 +1,3 @@
-"""
-ORM models for PhishGuard AI.
-
-Two tables:
-- users        : registered accounts (User or Admin role)
-- detections   : one row per URL scan (kept for personal + admin history)
-"""
-
 from datetime import datetime, timezone
 
 

@@ -1,10 +1,3 @@
-"""
-SQLite database setup for PhishGuard AI.
-
-The DB file lives at backend/phishguard.db by default. Override the
-location with the PHISHGUARD_DB environment variable if needed.
-"""
-
 import os
 
 from sqlalchemy import create_engine

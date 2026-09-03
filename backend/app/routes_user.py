@@ -1,14 +1,3 @@
-"""
-User-facing endpoints (logged-in, any role):
-- POST /api/scan                one URL scan (writes to detections table)
-- POST /api/scan/batch          up to 100 URLs at a time
-- POST /api/explain             SHAP + LIME + plain-text explanation
-- GET  /api/detections          the caller's personal detection history
-- GET  /api/detections/summary  personal counts + feature distribution
-- GET  /api/profile             the caller's profile
-- PATCH /api/profile            update name / email
-- POST /api/profile/password    change password
-"""
 
 from typing import List, Optional
 

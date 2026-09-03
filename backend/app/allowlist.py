@@ -1,27 +1,3 @@
-"""
-Curated allowlist of high-reputation domains.
-
-Real-world phishing detection systems (Google Safe Browsing, VirusTotal,
-Microsoft SmartScreen, Cisco Umbrella, etc.) all combine ML classifiers
-with reputation lists. This module implements the reputation-list side.
-
-Why it exists:
-- Datasets like PhiUSIIL were collected at a specific point in time. New
-  legitimate domains (chatgpt.com, claude.ai, ...) were not in the
-  training set, so the URL-only ML model has never seen their character
-  distribution and can misclassify them as phishing.
-- False positives on obviously-legitimate URLs damage user trust more
-  than an occasional missed phishing URL, so top-tier domains SHOULD
-  bypass ML classification.
-- The list is intentionally small and only holds domains most users
-  would recognise as trustworthy. Everything else still goes through
-  the ML pipeline.
-
-If you want to expand or shrink this list at deploy time, edit
-TRUSTED_DOMAINS below. In a bigger production system this would live
-in a database or a config file loaded on startup.
-"""
-
 from urllib.parse import urlparse
 
 # Registrable domains (no protocol, no path). Subdomains match automatically:

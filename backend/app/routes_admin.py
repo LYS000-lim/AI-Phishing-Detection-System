@@ -1,16 +1,3 @@
-"""
-Admin-only endpoints. All protected by `require_admin`.
-
-- GET    /api/admin/dashboard             Interface 7 stats + charts
-- GET    /api/admin/detections            Interface 8 all-user detection logs
-- DELETE /api/admin/detections/{id}       Remove a log entry
-- GET    /api/admin/users                 Interface 9 all users
-- PATCH  /api/admin/users/{id}            Edit / role / activate / deactivate
-- DELETE /api/admin/users/{id}            Remove a user (cascade deletes logs)
-- GET    /api/admin/analytics             Interface 10 model comparison
-- GET    /api/admin/analytics/global-shap Global SHAP mean-abs contributions
-"""
-
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 

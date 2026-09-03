@@ -1,5 +1,3 @@
-"""Pydantic schemas for request bodies and API responses."""
-
 from datetime import datetime
 from typing import List, Literal, Optional
 

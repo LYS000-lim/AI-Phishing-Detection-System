@@ -1,10 +1,3 @@
-"""
-Authentication and role-based authorisation for PhishGuard AI.
-
-Uses bcrypt for password hashing and PyJWT for stateless tokens.
-Tokens include {sub: user_id, role: "user"|"admin", exp}.
-"""
-
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional

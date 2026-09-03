@@ -1,10 +1,3 @@
-"""
-Central place where the trained models and explainers live.
-
-Loaded once at startup by main.py. Importing this module for the first
-time also loads the deployment model into memory.
-"""
-
 import os
 from typing import Optional
 

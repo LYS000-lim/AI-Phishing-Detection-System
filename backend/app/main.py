@@ -1,22 +1,3 @@
-"""
-PhishGuard AI - FastAPI backend entry point.
-
-Interfaces served (via router mounts):
-    /api/auth/*      Login, Register, Logout, Current user
-    /api/scan        Interface 4 (Analyse URL)
-    /api/explain     SHAP + LIME + plain-text
-    /api/detections* Interface 5 (User Dashboard) + Interface 6 (History)
-    /api/profile*    Interface 6 (User Profile)
-    /api/admin/*     Interfaces 7-10 (admin only)
-
-Label convention across the whole app:
-    0 = Legitimate
-    1 = Phishing  (positive class for reported metrics)
-
-Run from backend/ :
-    uvicorn app.main:app --reload --port 8000
-"""
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
