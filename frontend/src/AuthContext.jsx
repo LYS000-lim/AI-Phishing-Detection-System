@@ -7,7 +7,6 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [ready, setReady] = useState(false)
 
-  // On first mount, rehydrate the session from the stored token
   useEffect(() => {
     const token = api.getToken()
     if (!token) {
@@ -29,9 +28,6 @@ export function AuthProvider({ children }) {
   }, [])
 
   const register = useCallback(async (full_name, email, password) => {
-    // Backend returns {message, user}. We deliberately do NOT set the
-    // token here - the user should log in intentionally after seeing
-    // the success message.
     const res = await api.register({ full_name, email, password })
     return res
   }, [])

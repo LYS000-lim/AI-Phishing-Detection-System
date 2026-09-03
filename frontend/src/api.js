@@ -1,5 +1,3 @@
-// Central API client. Reads the JWT from localStorage and attaches it
-// to every request. Vite proxies /api to http://localhost:8000 in dev.
 
 const BASE = import.meta.env.VITE_API_URL || ''
 const TOKEN_KEY = 'pg_token'
