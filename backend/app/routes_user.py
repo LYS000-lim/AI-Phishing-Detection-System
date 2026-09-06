@@ -11,9 +11,10 @@ from .database import get_db
 from .explanations import plain_text_explanation, risk_level
 from .features import FEATURE_ORDER, extract_features, feature_vector
 from .ml_state import get_lime_explainer, get_shap_explainer, model_info, MODEL
-from .models import Detection, User
+from .models import Detection, ReportedURL, User
 from .schemas import (
     BatchRequest, DetectionOut, PasswordChange, ProfileUpdate,
+    ReportURLRequest, ReportedURLOut,
     URLRequest, UserOut,
 )
 
@@ -330,6 +331,40 @@ def detection_detail(
         raise HTTPException(403, "Not permitted")
     return DetectionOut.model_validate(row)
 
+# ---------------------------------------------------------------------------
+# Report phishing URL
+# ---------------------------------------------------------------------------
+
+@router.post("/api/report-url", response_model=ReportedURLOut)
+def report_url(
+    req: ReportURLRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    existing = (
+        db.query(ReportedURL)
+        .filter(ReportedURL.url == req.url)
+        .first()
+    )
+
+    if existing:
+        raise HTTPException(
+            409,
+            "This URL has already been reported."
+        )
+
+    reported = ReportedURL(
+        user_id=user.id,
+        url=req.url,
+        attack_type=req.attack_type,
+        detection_reason=req.detection_reason,
+    )
+
+    db.add(reported)
+    db.commit()
+    db.refresh(reported)
+
+    return reported
 
 # ---------------------------------------------------------------------------
 # Profile

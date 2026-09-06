@@ -13,6 +13,7 @@ const adminLinks = [
   { to: '/admin/logs', label: 'Detection Logs' },
   { to: '/admin/users', label: 'User Management' },
   { to: '/admin/analytics', label: 'Model Analytics' },
+  { to: '/admin/blacklist', label: 'Blacklist Database' },
 ]
 
 export default function Layout() {

@@ -40,6 +40,13 @@ export const scanURL = (url) =>
 export const explainURL = (url) =>
   request('/api/explain', { method: 'POST', body: { url } })
 
+// ------ Report phishing URL ------
+export const reportURL = (payload) =>
+  request('/api/report-url', {
+    method: 'POST',
+    body: payload,
+  })
+
 // ------ Personal history + dashboard ------
 export const myDetections = (q = '') =>
   request(`/api/detections${q ? `?q=${encodeURIComponent(q)}` : ''}`)
@@ -58,12 +65,23 @@ export const publicMetrics = () => request('/api/metrics', { auth: false })
 
 // ------ Admin ------
 export const adminDashboard = () => request('/api/admin/dashboard')
-export const adminDetections = (q = '', result = '') => {
+export const adminDetections = (
+  q = '',
+  result = '',
+  page = 1,
+  pageSize = 20
+) => {
   const params = new URLSearchParams()
+
+  params.set('page', page)
+  params.set('page_size', pageSize)
+
   if (q) params.set('q', q)
   if (result) params.set('result', result)
-  const qs = params.toString()
-  return request(`/api/admin/detections${qs ? `?${qs}` : ''}`)
+
+  return request(
+    `/api/admin/detections?${params.toString()}`
+  )
 }
 export const adminDeleteDetection = (id) =>
   request(`/api/admin/detections/${id}`, { method: 'DELETE' })
@@ -77,3 +95,59 @@ export const adminDeleteUser = (id) =>
   request(`/api/admin/users/${id}`, { method: 'DELETE' })
 export const adminAnalytics = () => request('/api/admin/analytics')
 export const adminGlobalShap = () => request('/api/admin/analytics/global-shap')
+
+export const adminReportedURLs = (
+  q = '',
+  page = 1,
+  pageSize = 20
+) => {
+  const params = new URLSearchParams()
+
+  params.set('page', page)
+  params.set('page_size', pageSize)
+
+  if (q) params.set('q', q)
+
+  return request(
+    `/api/admin/reported-urls?${params.toString()}`
+  )
+}
+
+// ------ Admin Blacklist Export ------
+export const exportBlacklistPDF = async () => {
+  const token = getToken()
+
+  const headers = {}
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const res = await fetch(
+    `${BASE}/api/admin/reported-urls/export`,
+    {
+      method: 'GET',
+      headers,
+    }
+  )
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || 'Failed to export PDF')
+  }
+
+  const blob = await res.blob()
+
+  const url = window.URL.createObjectURL(blob)
+
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'PhishGuard_Blacklist_Report.pdf'
+
+  document.body.appendChild(link)
+  link.click()
+
+  link.remove()
+
+  window.URL.revokeObjectURL(url)
+}

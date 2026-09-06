@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { scanURL, explainURL } from '../../api.js'
+import { scanURL, explainURL, reportURL } from '../../api.js'
 
 export default function Scanner() {
   const [url, setUrl] = useState('')
@@ -7,6 +7,8 @@ export default function Scanner() {
   const [result, setResult] = useState(null)
   const [explain, setExplain] = useState(null)
   const [error, setError] = useState('')
+  const [reported, setReported] = useState(false)
+  const [reporting, setReporting] = useState(false)
 
   const run = async () => {
     const target = url.trim()
@@ -24,6 +26,31 @@ export default function Scanner() {
       setError(e.message)
     } finally {
       setBusy(false)
+    }
+  }
+
+  const handleReport = async () => {
+    if (!result) return
+
+    setReporting(true)
+    setError('')
+
+    try {
+      await reportURL({
+        url: result.url,
+        attack_type: result.attack_type?.category || null,
+
+      detection_reason:
+        explain?.plain_text ||
+        "Detected suspicious phishing characteristics",
+    })
+
+      setReported(true)
+
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setReporting(false)
     }
   }
 
@@ -86,6 +113,22 @@ export default function Scanner() {
             <span>Model used: <b>{result.model_used}</b></span>
             <span>Confidence: <b>{(result.confidence * 100).toFixed(1)}%</b></span>
           </div>
+
+          {isPhish && (
+            <div className="report-section">
+              <button
+                className="report-btn"
+                onClick={handleReport}
+                disabled={reporting || reported}
+              >
+                {reported
+                  ? 'URL Reported'
+                  : reporting
+                  ? 'Reporting...'
+                  : 'Report URL'}
+              </button>
+            </div>
+          )}
 
           {result.attack_type && (
             <div className="attack-box">

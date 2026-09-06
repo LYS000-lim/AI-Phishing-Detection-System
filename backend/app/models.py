@@ -25,8 +25,17 @@ class User(Base):
     created_at = Column(DateTime, nullable=False, default=_utc_now)
 
     detections = relationship(
-        "Detection", back_populates="user",
-        cascade="all, delete-orphan", passive_deletes=True,
+        "Detection",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    reported_urls = relationship(
+        "ReportedURL",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -51,3 +60,46 @@ class Detection(Base):
     )
 
     user = relationship("User", back_populates="detections")
+
+class ReportedURL(Base):
+    __tablename__ = "reported_urls"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    url = Column(
+        Text,
+        nullable=False,
+    )
+
+    attack_type = Column(
+        String(64),
+        nullable=True,
+    )
+
+    detection_reason = Column(
+        Text,
+        nullable=True,
+    )
+
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=_utc_now,
+        index=True,
+    )
+
+    user = relationship(
+        "User",
+        back_populates="reported_urls",
+    )

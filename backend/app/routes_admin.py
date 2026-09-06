@@ -1,8 +1,12 @@
+import os
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy import Integer, desc, func
 from sqlalchemy.orm import Session
 
@@ -13,7 +17,7 @@ from .ml_state import (
     DT_METRICS, MODEL_LABEL, RF_METRICS,
     global_shap_importance, model_info,
 )
-from .models import Detection, User
+from .models import Detection, ReportedURL, User
 from .schemas import (
     AdminCreateUser, AdminUserUpdate, DetectionWithUser, UserOut,
 )
@@ -82,9 +86,10 @@ def dashboard(
 # ---------------------------------------------------------------------------
 # Detection logs (all users)
 # ---------------------------------------------------------------------------
-@router.get("/detections", response_model=List[DetectionWithUser])
+@router.get("/detections")
 def all_detections(
-    limit: int = 200,
+    page: int = 1,
+    page_size: int = 20,
     q: Optional[str] = None,
     result: Optional[str] = None,          # "phishing" | "legitimate"
     db: Session = Depends(get_db),
@@ -97,18 +102,37 @@ def all_detections(
         )
     if result in ("phishing", "legitimate"):
         query = query.filter(Detection.prediction == result)
-    rows = query.order_by(desc(Detection.created_at)).limit(limit).all()
+    total = query.count()
 
-    return [
-        DetectionWithUser(
-            id=d.id, url=d.url, prediction=d.prediction, label=d.label,
-            confidence=d.confidence, phishing_probability=d.phishing_probability,
-            risk_level=d.risk_level, model_used=d.model_used,
-            created_at=d.created_at, ip_address=d.ip_address,
-            user_email=u.email, user_name=u.full_name,
-        )
-        for d, u in rows
-    ]
+    rows = (
+        query
+        .order_by(desc(Detection.created_at))
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return {
+        "items": [
+            DetectionWithUser(
+                id=d.id,
+                url=d.url,
+                prediction=d.prediction,
+                label=d.label,
+                confidence=d.confidence,
+                phishing_probability=d.phishing_probability,
+                risk_level=d.risk_level,
+                model_used=d.model_used,
+                created_at=d.created_at,
+                ip_address=d.ip_address,
+                user_email=u.email,
+                user_name=u.full_name,
+            )
+            for d, u in rows
+        ],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
 
 
 @router.delete("/detections/{detection_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -269,3 +293,118 @@ def global_shap(top: int = 15, _: User = Depends(require_admin)):
             {"name": n, "mean_abs_shap": round(float(v), 5)} for n, v in pairs
         ],
     }
+
+# ---------------------------------------------------------------------------
+# Blacklist Database
+# ---------------------------------------------------------------------------
+
+@router.get("/reported-urls")
+def reported_urls(
+    page: int = 1,
+    page_size: int = 20,
+    q: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    query = db.query(ReportedURL)
+
+    if q:
+        query = query.filter(
+            ReportedURL.url.ilike(f"%{q}%")
+        )
+
+    total = query.count()
+
+    rows = (
+        query
+        .order_by(desc(ReportedURL.created_at))
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "url": r.url,
+                "attack_type": r.attack_type,
+                "detection_reason": r.detection_reason,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
+
+# ---------------------------------------------------------------------------
+# Blacklist Report Export
+# ---------------------------------------------------------------------------
+
+@router.get("/reported-urls/export")
+def export_blacklist_pdf(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    reports = (
+        db.query(ReportedURL)
+        .order_by(desc(ReportedURL.created_at))
+        .all()
+    )
+
+    file_path = "PhishGuard_Blacklist_Report.pdf"
+
+    doc = SimpleDocTemplate(file_path)
+
+    styles = getSampleStyleSheet()
+
+    content = []
+
+    content.append(
+        Paragraph(
+            "PhishGuard AI - Blacklist Database Report",
+            styles["Title"]
+        )
+    )
+
+    data = [
+        [
+            "No",
+            "URL",
+            "Attack Type",
+            "Detection Reason",
+            "Date"
+        ]
+    ]
+
+    for index, row in enumerate(reports, start=1):
+        data.append(
+            [
+                str(index),
+                row.url,
+                row.attack_type or "-",
+                row.detection_reason,
+                row.created_at.strftime("%Y-%m-%d")
+            ]
+        )
+
+    table = Table(data, repeatRows=1)
+
+    table.setStyle(
+        TableStyle([
+            ("GRID", (0,0), (-1,-1), 0.5, None),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ])
+    )
+
+    content.append(table)
+
+    doc.build(content)
+
+    return FileResponse(
+        file_path,
+        media_type="application/pdf",
+        filename="PhishGuard_Blacklist_Report.pdf"
+    )

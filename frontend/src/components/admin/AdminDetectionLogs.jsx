@@ -3,6 +3,9 @@ import { adminDeleteDetection, adminDetections } from '../../api.js'
 
 export default function AdminDetectionLogs() {
   const [rows, setRows] = useState([])
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const pageSize = 20
   const [q, setQ] = useState('')
   const [result, setResult] = useState('')
   const [loading, setLoading] = useState(true)
@@ -11,13 +14,18 @@ export default function AdminDetectionLogs() {
 
   const load = () => {
     setLoading(true)
-    adminDetections(q, result)
-      .then(setRows)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false))
+    adminDetections(q, result, page, pageSize)
+    .then((data)=>{
+        setRows(data.items)
+        setTotal(data.total)
+    })
+    .catch((e) => setError(e.message))
+    .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() /* eslint-disable-next-line */ }, [result])
+  useEffect(() => {
+    load()
+  }, [result, page])
 
   const remove = async (id) => {
     if (!confirm('Delete this detection log?')) return
@@ -28,6 +36,8 @@ export default function AdminDetectionLogs() {
       alert(e.message)
     }
   }
+
+  const totalPages = Math.ceil(total / pageSize)
 
   return (
     <>
@@ -57,7 +67,15 @@ export default function AdminDetectionLogs() {
               <option value="phishing">Phishing only</option>
               <option value="legitimate">Legitimate only</option>
             </select>
-            <button className="scan-btn small" onClick={load}>Apply</button>
+            <button
+              className="scan-btn small"
+              onClick={() => {
+                setPage(1)
+                load()
+              }}
+            >
+              Apply
+            </button>
           </div>
         </div>
 
@@ -67,42 +85,101 @@ export default function AdminDetectionLogs() {
         ) : rows.length === 0 ? (
           <p className="empty">No detections match these filters.</p>
         ) : (
-          <table className="hist">
-            <thead>
-              <tr>
-                <th>Time</th><th>User</th><th>URL</th><th>Verdict</th>
-                <th>Risk</th><th>Model</th><th>IP</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td>{new Date(r.created_at).toLocaleString()}</td>
-                  <td>
-                    <div>{r.user_name}</div>
-                    <div className="mono muted">{r.user_email}</div>
-                  </td>
-                  <td className="mono ellip">{r.url}</td>
-                  <td>
-                    <span className={`badge ${r.prediction === 'phishing' ? 'phish' : 'legit'}`}>
-                      {r.prediction}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`risk-pill risk-${r.risk_level.toLowerCase()}`}>
-                      {r.risk_level}
-                    </span>
-                  </td>
-                  <td className="mono">{r.model_used}</td>
-                  <td className="mono">{r.ip_address || '-'}</td>
-                  <td>
-                    <button className="link-btn" onClick={() => setDetail(r)}>View</button>
-                    <button className="link-btn danger" onClick={() => remove(r.id)}>Delete</button>
-                  </td>
+          <>
+            <table className="hist">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>User</th>
+                  <th>URL</th>
+                  <th>Verdict</th>
+                  <th>Risk</th>
+                  <th>Model</th>
+                  <th>IP</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{new Date(r.created_at).toLocaleString()}</td>
+
+                    <td>
+                      <div>{r.user_name}</div>
+                      <div className="mono muted">{r.user_email}</div>
+                    </td>
+
+                    <td className="mono ellip">{r.url}</td>
+
+                    <td>
+                      <span className={`badge ${r.prediction === 'phishing' ? 'phish' : 'legit'}`}>
+                        {r.prediction}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span className={`risk-pill risk-${r.risk_level.toLowerCase()}`}>
+                        {r.risk_level}
+                      </span>
+                    </td>
+
+                    <td className="mono">{r.model_used}</td>
+
+                    <td className="mono">
+                      {r.ip_address || '-'}
+                    </td>
+
+                    <td>
+                      <button
+                        className="link-btn"
+                        onClick={() => setDetail(r)}
+                      >
+                        View
+                      </button>
+
+                      <button
+                        className="link-btn danger"
+                        onClick={() => remove(r.id)}
+                      >
+                        Delete
+                      </button>
+                    </td>
+
+                  </tr>
+                ))}
+              </tbody>
+
+            </table>
+
+
+            <div className="pagination">
+
+              <button
+                className="link-btn"
+                disabled={page === 1}
+                onClick={() => setPage(page - 1)}
+              >
+                Previous
+              </button>
+
+
+              <span>
+                Page {page} / {totalPages || 1}
+              </span>
+
+
+              <button
+                className="link-btn"
+                disabled={page === totalPages}
+                onClick={() => setPage(page + 1)}
+              >
+                Next
+              </button>
+
+            </div>
+
+          </>
         )}
       </section>
 

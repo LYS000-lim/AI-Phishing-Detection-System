@@ -14,6 +14,7 @@ import AdminDashboard from './components/admin/AdminDashboard.jsx'
 import AdminDetectionLogs from './components/admin/AdminDetectionLogs.jsx'
 import AdminUserManagement from './components/admin/AdminUserManagement.jsx'
 import ModelAnalytics from './components/admin/ModelAnalytics.jsx'
+import AdminBlacklist from './components/admin/AdminBlacklist.jsx'
 
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user, ready } = useAuth()
@@ -67,7 +68,11 @@ export default function App() {
               path="/admin/analytics"
               element={<ProtectedRoute adminOnly><ModelAnalytics /></ProtectedRoute>}
             />
-          </Route>
+            <Route
+              path="/admin/blacklist"
+              element={<ProtectedRoute adminOnly><AdminBlacklist /></ProtectedRoute>}
+            />
+            </Route>
 
           <Route path="*" element={<Navigate to="/scanner" replace />} />
         </Routes>

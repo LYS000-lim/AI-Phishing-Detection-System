@@ -78,6 +78,18 @@ class AdminUserUpdate(BaseModel):
 class URLRequest(BaseModel):
     url: str = Field(..., min_length=4, examples=["https://example.com"])
 
+class ReportURLRequest(BaseModel):
+    url: str = Field(
+        ...,
+        min_length=4,
+        examples=["https://example-phishing.com"]
+    )
+
+    attack_type: Optional[str] = None
+
+    report_reason: Optional[str] = None
+
+    detection_reason: Optional[str] = None
 
 class BatchRequest(BaseModel):
     urls: List[str] = Field(..., min_length=1, max_length=100)
@@ -107,6 +119,14 @@ class DetectionOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class ReportedURLOut(BaseModel):
+    id: int
+    url: str
+    attack_type: Optional[str] = None
+    detection_reason: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 class DetectionWithUser(DetectionOut):
     user_email: str
