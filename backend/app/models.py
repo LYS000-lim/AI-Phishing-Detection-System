@@ -103,3 +103,56 @@ class ReportedURL(Base):
         "User",
         back_populates="reported_urls",
     )
+
+class ExtensionReport(Base):
+    __tablename__ = "extension_reports"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    url = Column(
+        Text,
+        nullable=False,
+    )
+
+    attack_type = Column(
+        String(64),
+        nullable=True,
+    )
+
+    detection_reason = Column(
+        Text,
+        nullable=True,
+    )
+
+    ip_address = Column(
+        String(64),
+        nullable=True,
+    )
+
+    browser_info = Column(
+        Text,
+        nullable=True,
+    )
+
+    status = Column(
+        String(16),
+        nullable=False,
+        default="pending",
+    )
+    # pending | approved | rejected
+
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=_utc_now,
+        index=True,
+    )
+
+    reviewed_at = Column(
+        DateTime,
+        nullable=True,
+    )

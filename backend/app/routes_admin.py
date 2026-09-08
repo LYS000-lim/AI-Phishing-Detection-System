@@ -17,7 +17,7 @@ from .ml_state import (
     DT_METRICS, MODEL_LABEL, RF_METRICS,
     global_shap_importance, model_info,
 )
-from .models import Detection, ReportedURL, User
+from .models import Detection, ReportedURL, ExtensionReport, User
 from .schemas import (
     AdminCreateUser, AdminUserUpdate, DetectionWithUser, UserOut,
 )
@@ -306,37 +306,162 @@ def reported_urls(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    query = db.query(ReportedURL)
 
-    if q:
-        query = query.filter(
-            ReportedURL.url.ilike(f"%{q}%")
-        )
-
-    total = query.count()
-
-    rows = (
-        query
+    user_reports = (
+        db.query(ReportedURL)
         .order_by(desc(ReportedURL.created_at))
-        .offset((page - 1) * page_size)
-        .limit(page_size)
         .all()
     )
 
-    return {
-        "items": [
+
+    extension_reports = (
+        db.query(ExtensionReport)
+        .order_by(desc(ExtensionReport.created_at))
+        .all()
+    )
+
+
+    items = []
+
+
+    # Existing registered user reports
+    for r in user_reports:
+
+        items.append(
             {
                 "id": r.id,
                 "url": r.url,
                 "attack_type": r.attack_type,
                 "detection_reason": r.detection_reason,
+                "source": "User Report",
+                "status": "approved",
                 "created_at": r.created_at,
             }
-            for r in rows
-        ],
+        )
+
+
+    # Anonymous extension reports
+    for r in extension_reports:
+
+        items.append(
+            {
+                "id": r.id,
+                "url": r.url,
+                "attack_type": r.attack_type,
+                "detection_reason": r.detection_reason,
+                "source": "Chrome Extension",
+                "status": r.status,
+                "created_at": r.created_at,
+            }
+        )
+
+
+    # Search filter
+    if q:
+        items = [
+            x for x in items
+            if q.lower() in x["url"].lower()
+        ]
+
+
+    # Sort newest first
+
+    items.sort(
+        key=lambda x: x["created_at"],
+        reverse=True,
+    )
+
+
+    total = len(items)
+
+
+    start = (page - 1) * page_size
+    end = start + page_size
+
+
+    return {
+        "items": items[start:end],
         "page": page,
         "page_size": page_size,
         "total": total,
+    }
+
+# ---------------------------------------------------------------------------
+# Extension Report Approval
+# ---------------------------------------------------------------------------
+
+@router.post("/extension-reports/{report_id}/approve")
+def approve_extension_report(
+    report_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+
+    report = (
+        db.query(ExtensionReport)
+        .filter(ExtensionReport.id == report_id)
+        .first()
+    )
+
+    if not report:
+        raise HTTPException(
+            404,
+            "Extension report not found"
+        )
+
+
+    report.status = "approved"
+
+    report.reviewed_at = datetime.now(
+        timezone.utc
+    ).replace(tzinfo=None)
+
+
+    db.commit()
+    db.refresh(report)
+
+
+    return {
+        "message": "Extension report approved",
+        "id": report.id,
+        "status": report.status,
+    }
+
+@router.post("/extension-reports/{report_id}/reject")
+def reject_extension_report(
+    report_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+
+    report = (
+        db.query(ExtensionReport)
+        .filter(ExtensionReport.id == report_id)
+        .first()
+    )
+
+    if not report:
+        raise HTTPException(
+            404,
+            "Extension report not found"
+        )
+
+
+    report.status = "rejected"
+
+    report.reviewed_at = datetime.now(
+        timezone.utc
+    ).replace(tzinfo=None)
+
+
+    db.commit()
+    db.refresh(report)
+
+
+    return {
+        "message": "Extension report rejected",
+        "id": report.id,
+        "status": report.status,
     }
 
 # ---------------------------------------------------------------------------

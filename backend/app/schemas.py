@@ -128,6 +128,27 @@ class ReportedURLOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class ExtensionReportCreate(BaseModel):
+    url: str
+    attack_type: Optional[str] = None
+    detection_reason: Optional[str] = None
+    browser_info: Optional[str] = None
+
+
+class ExtensionReportOut(BaseModel):
+    id: int
+    url: str
+    attack_type: Optional[str] = None
+    detection_reason: Optional[str] = None
+    browser_info: Optional[str] = None
+    ip_address: Optional[str] = None
+    status: str
+    created_at: datetime
+    reviewed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 class DetectionWithUser(DetectionOut):
     user_email: str
     user_name: str

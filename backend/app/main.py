@@ -6,6 +6,7 @@ from .ml_state import DT_METRICS, MODEL, MODEL_LABEL, RF_METRICS
 from .routes_admin import router as admin_router
 from .routes_auth import router as auth_router
 from .routes_user import router as user_router
+from .routes_extension import router as extension_router
 
 app = FastAPI(
     title="PhishGuard AI",
@@ -33,6 +34,7 @@ init_db()
 app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(admin_router)
+app.include_router(extension_router)
 
 
 @app.get("/api/health")
