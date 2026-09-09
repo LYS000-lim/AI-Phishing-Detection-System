@@ -1,0 +1,198 @@
+#phishguard-warning {
+
+    position: fixed;
+
+    top: 0;
+    left: 0;
+
+    width: 100vw;
+    height: 100vh;
+
+    background:
+    #080b14;
+
+    display: flex;
+
+    justify-content: center;
+
+    align-items: center;
+
+    z-index: 2147483647;
+
+    font-family:
+    Arial,
+    Helvetica,
+    sans-serif;
+
+}
+
+
+
+.pg-card {
+
+    width: 520px;
+
+    max-width: 90%;
+
+    background:
+    #111827;
+
+    border-radius: 16px;
+
+    padding: 40px;
+
+    text-align: center;
+
+    color: white;
+
+    box-shadow:
+    0 0 40px rgba(255,0,0,0.4);
+
+}
+
+
+
+.pg-card h1 {
+
+    color:
+    #ff3b3b;
+
+    font-size:
+    32px;
+
+    margin-bottom:
+    10px;
+
+}
+
+
+
+.pg-card h2 {
+
+    color:
+    white;
+
+    text-transform:
+    uppercase;
+
+    margin-bottom:
+    20px;
+
+}
+
+
+
+.pg-card p {
+
+    color:
+    #cbd5e1;
+
+    line-height:
+    1.5;
+
+}
+
+
+
+.pg-info {
+
+    margin-top:
+    25px;
+
+    background:
+    #1f2937;
+
+    border-radius:
+    10px;
+
+    padding:
+    15px;
+
+    text-align:
+    left;
+
+}
+
+
+
+.pg-info p {
+
+    margin:
+    12px 0;
+
+    word-break:
+    break-word;
+
+}
+
+
+
+.pg-card button {
+
+    width:
+    80%;
+
+    padding:
+    14px;
+
+    margin-top:
+    15px;
+
+    border:
+    none;
+
+    border-radius:
+    8px;
+
+    font-size:
+    16px;
+
+    cursor:
+    pointer;
+
+}
+
+
+
+#pg-leave {
+
+    background:
+    #dc2626;
+
+    color:
+    white;
+
+}
+
+
+
+#pg-continue {
+
+    background:
+    #374151;
+
+    color:
+    white;
+
+}
+
+
+
+#pg-report {
+
+    background:
+    #2563eb;
+
+    color:
+    white;
+
+}
+
+
+
+.pg-card button:hover {
+
+    opacity:
+    0.85;
+
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { adminReportedURLs, exportBlacklistPDF } from '../../api.js'
+import { adminReportedURLs, exportBlacklistPDF, approveExtensionReport, rejectExtensionReport } from '../../api.js'
 
 export default function AdminBlacklist() {
 
@@ -37,6 +37,39 @@ export default function AdminBlacklist() {
     }catch(e){
       setError(e.message)
     }
+  }
+
+  const approveReport = async(id)=>{
+
+    try{
+
+      await approveExtensionReport(id)
+
+      load()
+
+    }catch(e){
+
+      setError(e.message)
+
+    }
+
+  }
+
+
+  const rejectReport = async(id)=>{
+
+    try{
+
+      await rejectExtensionReport(id)
+
+      load()
+
+    }catch(e){
+
+      setError(e.message)
+
+    }
+
   }
 
 
@@ -84,9 +117,12 @@ export default function AdminBlacklist() {
             <thead>
               <tr>
                 <th>URL</th>
+                <th>Source</th>
                 <th>Attack Type</th>
+                <th>Status</th>
                 <th>Detection Reason</th>
                 <th>Date</th>
+                <th>Action</th>
               </tr>
             </thead>
 
@@ -97,13 +133,62 @@ export default function AdminBlacklist() {
 
                 <tr key={r.id}>
 
-                  <td className="mono ellip">{r.url}</td>
+                <td className="mono ellip">
+                  {r.url}
+                </td>
 
-                  <td>{r.attack_type || "-"}</td>
 
-                  <td>{r.detection_reason || "-"}</td>
+                <td>
+                  {r.source || "-"}
+                </td>
 
-                  <td>{new Date(r.created_at).toLocaleString()}</td>
+
+                <td>
+                  {r.attack_type || "-"}
+                </td>
+
+
+                <td>
+                  {r.status || "-"}
+                </td>
+
+
+                <td>
+                  {r.detection_reason || "-"}
+                </td>
+
+
+                <td>
+                  {new Date(r.created_at).toLocaleString()}
+                </td>
+
+
+                <td>
+
+                {
+                  r.source === "Chrome Extension" &&
+                  r.status === "pending" &&
+
+                  <>
+                    <button
+                      className="link-btn"
+                      onClick={()=>approveReport(r.id)}
+                    >
+                      Approve
+                    </button>
+
+
+                    <button
+                      className="link-btn"
+                      onClick={()=>rejectReport(r.id)}
+                    >
+                      Reject
+                    </button>
+                  </>
+                }
+
+                </td>
+
 
                 </tr>
 

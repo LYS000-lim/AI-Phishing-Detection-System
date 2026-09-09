@@ -113,6 +113,25 @@ export const adminReportedURLs = (
   )
 }
 
+// ------ Admin Extension Reports ------
+
+export const approveExtensionReport = (id) =>
+  request(
+    `/api/admin/extension-reports/${id}/approve`,
+    {
+      method: 'POST',
+    }
+  )
+
+
+export const rejectExtensionReport = (id) =>
+  request(
+    `/api/admin/extension-reports/${id}/reject`,
+    {
+      method: 'POST',
+    }
+  )
+
 // ------ Admin Blacklist Export ------
 export const exportBlacklistPDF = async () => {
   const token = getToken()
