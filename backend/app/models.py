@@ -1,12 +1,12 @@
 from datetime import datetime, timezone
-
+from sqlalchemy import Text
 
 def _utc_now():
     """Naive UTC 'now' for DB timestamps (stored as naive to keep SQLite happy)."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text,
+    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, JSON, 
 )
 from sqlalchemy.orm import relationship
 
@@ -55,6 +55,50 @@ class Detection(Base):
     risk_level = Column(String(8), nullable=False)    # "Low" | "Medium" | "High"
     model_used = Column(String(64), nullable=False)   # e.g. "RandomForest"
     ip_address = Column(String(64), nullable=True)
+    # =====================================================
+    # Phishing explanation data
+    # Added Step 2
+    # =====================================================
+
+    phishing_category = Column(
+        String,
+        nullable=True
+    )
+
+    rule_confidence = Column(
+        String,
+        nullable=True
+    )
+
+    category_confidence = Column(
+        Integer,
+        nullable=True
+    )
+
+    evidence_strength = Column(
+        String,
+        nullable=True
+    )
+
+    phishing_summary = Column(
+        Text,
+        nullable=True
+    )
+
+    phishing_techniques = Column(
+        Text,
+        nullable=True
+    )
+
+    category_evidence = Column(
+        Text,
+        nullable=True
+    )
+
+    technique_evidence = Column(
+        Text,
+        nullable=True
+    )
     created_at = Column(
         DateTime, nullable=False, default=_utc_now, index=True,
     )

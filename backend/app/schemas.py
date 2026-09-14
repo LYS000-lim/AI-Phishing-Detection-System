@@ -104,18 +104,84 @@ class LimeRule(BaseModel):
     rule: str
     weight: float
 
+class PhishingEvidence(BaseModel):
+    """
+    Evidence explanation generated from phishing_type.py
+    """
+
+    technique: Optional[str] = None
+
+    category: Optional[str] = None
+
+    evidence: str
 
 class DetectionOut(BaseModel):
     id: int
     url: str
     prediction: str
     label: int
+
+    # ML confidence
     confidence: float
+
     phishing_probability: float
+
     risk_level: str
+
     model_used: str
+
     created_at: datetime
+
     ip_address: Optional[str] = None
+
+
+    # =====================================================
+    # Phishing explanation information
+    # Added in Step 2
+    # =====================================================
+
+    phishing_category: Optional[str] = None
+
+    rule_confidence: Optional[str] = None
+
+    category_confidence: Optional[int] = None
+
+    evidence_strength: Optional[str] = None
+
+    phishing_summary: Optional[str] = None
+
+    phishing_techniques: Optional[List[str]] = None
+
+    category_evidence: Optional[List[PhishingEvidence]] = None
+
+    technique_evidence: Optional[List[PhishingEvidence]] = None
+
+    def model_post_init(self, __context):
+        import json
+
+        if isinstance(self.phishing_techniques, str):
+            try:
+                self.phishing_techniques = json.loads(
+                    self.phishing_techniques
+                )
+            except Exception:
+                self.phishing_techniques = []
+
+        if isinstance(self.category_evidence, str):
+            try:
+                self.category_evidence = json.loads(
+                    self.category_evidence
+                )
+            except Exception:
+                self.category_evidence = []
+
+        if isinstance(self.technique_evidence, str):
+            try:
+                self.technique_evidence = json.loads(
+                    self.technique_evidence
+                )
+            except Exception:
+                self.technique_evidence = []
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -389,3 +389,129 @@ body {
 }
 .role-row .radio:hover { border-color: var(--accent); }
 .role-row .radio input[type="radio"] { accent-color: var(--accent); }
+
+/* ------------ Scanner Analysis Cards ------------ */
+
+.attack-box,
+.security-box,
+.technical-evidence {
+
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-top: 18px;
+  line-height: 1.6;
+
+}
+
+
+/* Phishing Analysis */
+
+.attack-box {
+  border-left: 5px solid var(--bad);
+}
+
+
+.attack-box h3 {
+  margin-top:0;
+  color: var(--bad);
+  font-size:16px;
+}
+
+
+
+/* Legitimate / Trusted Analysis */
+
+.security-box {
+  border-left:5px solid var(--good);
+}
+
+
+.security-box h3 {
+  margin-top:0;
+  color:var(--good);
+  font-size:16px;
+}
+
+
+
+/* AI Evidence Container */
+
+.technical-evidence h4 {
+
+  margin-top:0;
+  color:var(--accent);
+  font-size:15px;
+
+}
+
+
+
+/* Individual AI cards */
+
+.evidence-card {
+
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:10px;
+
+  padding:14px 16px;
+
+  margin-top:12px;
+
+}
+
+
+.evidence-card h4 {
+
+  margin:0 0 12px;
+
+}
+
+
+.evidence-card p {
+
+  margin:6px 0;
+  font-size:13px;
+
+  color:var(--text);
+
+}
+
+
+/* Report button */
+
+.report-btn {
+
+  background:var(--bad);
+
+  color:white;
+
+  border:none;
+
+  border-radius:8px;
+
+  padding:10px 18px;
+
+  font-weight:600;
+
+  cursor:pointer;
+
+}
+
+
+.report-btn:hover {
+
+  opacity:.85;
+
+}
+
+
+.report-btn:disabled {
+
+  opacity:.5;
+
+  cursor:not-allowed;
+
+}
