@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 from .auth import current_user, hash_password, verify_password
 from .allowlist import is_trusted, matched_domain
 from .database import get_db
-from .explanations import plain_text_explanation, risk_level
+from .explanations import (
+    build_evidence, build_reason_bullets, plain_text_explanation, risk_level,
+)
 from .features import FEATURE_ORDER, extract_features, feature_vector
 from .ml_state import get_lime_explainer, get_shap_explainer, model_info, MODEL
 from .models import Detection, ReportedURL, User
@@ -18,8 +20,6 @@ from .schemas import (
     URLRequest, UserOut,
 )
 
-from .features import FEATURE_ORDER, extract_features, feature_vector
-from .ml_state import get_lime_explainer, get_shap_explainer, model_info, MODEL
 from .phishing_type import detect_phishing_type
 
 router = APIRouter(tags=["user"])
@@ -35,11 +35,11 @@ def _predict_and_log(
     ip: Optional[str] = None,
 ) -> dict:
     # Reputation-list bypass: well-known trusted domains skip ML
-    # classification entirely. Prevents false positives on obviously
-    # legitimate URLs (chatgpt.com, google.com, github.com, ...) which
-    # the URL-only model may not have seen in training.
+    # classification entirely. This is a separate result state from an ML
+    # legitimate prediction and therefore returns trusted_domain=True.
     if is_trusted(url):
         domain = matched_domain(url)
+        features = extract_features(url)
         record = Detection(
             user_id=user.id,
             url=url,
@@ -64,8 +64,11 @@ def _predict_and_log(
             "legitimate_probability": 1.0,
             "risk_level": "Low",
             "model_used": "TrustedAllowlist",
+            "trusted_domain": True,
             "matched_domain": domain,
-            "features": extract_features(url),
+            "security_status": "Trusted Website",
+            "features": features,
+            "attack_type": None,
             "created_at": record.created_at.isoformat(),
         }
 
@@ -86,16 +89,11 @@ def _predict_and_log(
     confidence = float(max(proba))
     prediction = "phishing" if label == 1 else "legitimate"
     risk = risk_level(p_phish)
-
     features = extract_features(url)
 
     attack_type = None
-
     if prediction == "phishing":
-        attack_type = detect_phishing_type(
-            url,
-            features
-        )
+        attack_type = detect_phishing_type(url, features)
 
     record = Detection(
         user_id=user.id,
@@ -122,7 +120,8 @@ def _predict_and_log(
         "legitimate_probability": round(float(proba[0]), 4),
         "risk_level": risk,
         "model_used": model_info()["name"],
-        "features": extract_features(url),
+        "trusted_domain": False,
+        "features": features,
         "attack_type": attack_type,
         "created_at": record.created_at.isoformat(),
     }
@@ -165,9 +164,8 @@ def scan_batch(
 # ---------------------------------------------------------------------------
 @router.post("/api/explain")
 def explain(req: URLRequest, user: User = Depends(current_user)):
-    # Allowlist short-circuit: mirror what /api/scan does so the frontend
-    # gets a consistent explanation object without spurious SHAP values
-    # for a URL that was never actually classified by the model.
+    # Trusted-domain results are decided by reputation verification, not by
+    # the ML model. Return a dedicated explanation state with no SHAP/LIME.
     if is_trusted(req.url):
         domain = matched_domain(req.url)
         return {
@@ -176,28 +174,41 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             "risk_level": "Low",
             "confidence": 1.0,
             "phishing_probability": 0.0,
+            "legitimate_probability": 1.0,
             "model_used": "TrustedAllowlist",
-            "plain_text": (
-                f"This URL was recognised as belonging to '{domain}', a "
-                f"well-known trusted domain, and was classified as "
-                f"LEGITIMATE without running through the ML model. Real "
-                f"phishing detection systems combine ML with reputation "
-                f"lists like this one to avoid false positives on popular "
-                f"legitimate sites."
-            ),
+            "trusted_domain": True,
             "matched_domain": domain,
+            "security_status": "Trusted Website",
+            "security_analysis": [
+                "This website has been verified as an official trusted domain.",
+                "The URL structure does not contain suspicious characteristics commonly observed in phishing websites.",
+            ],
+            "why_detected": [
+                f"The official domain '{domain}' matched the trusted-domain allowlist.",
+                "Trusted-domain verification completed successfully, so an ML explanation was not required.",
+            ],
+            "plain_text": (
+                f"The official domain '{domain}' matched the trusted-domain "
+                "allowlist. ML classification was not required."
+            ),
+            "attack_analysis": None,
+            "evidence": [],
             "shap": {
-                "note": "Trusted-allowlist bypass - SHAP not computed.",
+                "note": "Trusted-domain verification - SHAP not computed.",
                 "top_features": [],
             },
             "lime": {
-                "note": "Trusted-allowlist bypass - LIME not computed.",
+                "note": "Trusted-domain verification - LIME not computed.",
                 "top_rules": [],
             },
         }
 
+    if MODEL is None:
+        raise HTTPException(503, "Trained model is not available.")
+
     try:
         vec = feature_vector(req.url)
+        features = extract_features(req.url)
     except Exception as exc:
         raise HTTPException(422, f"Could not process URL: {exc}")
 
@@ -207,7 +218,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
     prediction = "phishing" if label == 1 else "legitimate"
     risk = risk_level(p_phish)
 
-    # SHAP contributions for class 1 (phishing)
+    # SHAP contributions for class 1 (phishing).
     shap_exp = get_shap_explainer()
     shap_vals = shap_exp.shap_values(vec)
     arr = np.asarray(shap_vals)
@@ -227,7 +238,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         reverse=True,
     )[:10]
 
-    # LIME local rules
+    # LIME local rules for the phishing class.
     lime_exp = get_lime_explainer()
     explanation = lime_exp.explain_instance(
         vec[0], MODEL.predict_proba, num_features=10, labels=[1],
@@ -237,7 +248,33 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         for rule, w in explanation.as_list(label=1)
     ]
 
+    attack_analysis = (
+        detect_phishing_type(req.url, features)
+        if prediction == "phishing"
+        else None
+    )
+    why_detected = build_reason_bullets(
+        prediction,
+        features,
+        shap_out,
+        attack_analysis=attack_analysis,
+        limit=3,
+    )
+    evidence = build_evidence(
+        prediction,
+        features,
+        shap_out,
+        lime_out,
+        limit=3,
+    )
     plain = plain_text_explanation(prediction, risk, shap_out)
+
+    security_analysis = None
+    if prediction == "legitimate":
+        security_analysis = [
+            "No significant phishing indicators were detected by the ML model.",
+            "The URL structure matches characteristics commonly associated with legitimate websites.",
+        ]
 
     return {
         "url": req.url,
@@ -245,8 +282,16 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         "risk_level": risk,
         "confidence": round(float(max(proba)), 4),
         "phishing_probability": round(p_phish, 4),
+        "legitimate_probability": round(float(proba[0]), 4),
         "model_used": model_info()["name"],
+        "trusted_domain": False,
         "plain_text": plain,
+        "attack_analysis": attack_analysis,
+        "security_analysis": security_analysis,
+        "why_detected": why_detected,
+        "evidence": evidence,
+        # Raw values are retained for analytics/backward compatibility, but
+        # the redesigned Scanner.jsx displays only the compact evidence list.
         "shap": {
             "note": "Positive values push toward PHISHING; negative toward LEGITIMATE.",
             "top_features": shap_out,

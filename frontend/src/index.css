@@ -389,3 +389,309 @@ body {
 }
 .role-row .radio:hover { border-color: var(--accent); }
 .role-row .radio input[type="radio"] { accent-color: var(--accent); }
+
+/* ============================================================
+   Scanner result redesign - Trusted / Phishing / Legitimate
+   ============================================================ */
+.scanner-panel { margin-bottom: 20px; }
+
+.scan-result {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 6px solid var(--accent);
+  border-radius: 12px;
+  padding: 20px 22px;
+  margin-bottom: 20px;
+}
+
+.scan-result.trusted,
+.scan-result.legit { border-left-color: var(--good); }
+.scan-result.phish { border-left-color: var(--bad); }
+
+.result-kicker {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding-bottom: 10px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.result-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+  letter-spacing: .045em;
+  font-size: 17px;
+}
+
+.scan-result.trusted .result-status,
+.scan-result.legit .result-status { color: var(--good); }
+.scan-result.phish .result-status { color: var(--bad); }
+
+.status-icon { font-size: 18px; line-height: 1; }
+
+.result-url {
+  color: var(--muted);
+  margin-top: 7px;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.result-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.result-metrics.trusted-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.metric-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.metric-label,
+.analysis-label {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .055em;
+  margin-bottom: 5px;
+}
+
+.metric-card strong {
+  display: block;
+  font-size: 14px;
+  word-break: break-word;
+}
+
+.result-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 16px;
+}
+
+.report-btn {
+  background: transparent;
+  color: #fecaca;
+  border: 1px solid rgba(239, 68, 68, .45);
+  border-radius: 8px;
+  padding: 9px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.report-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, .09);
+  border-color: var(--bad);
+}
+
+.report-btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.result-section {
+  padding: 20px 22px;
+}
+
+.result-section > h3 {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 15px;
+}
+
+.result-section p {
+  line-height: 1.65;
+}
+
+.section-intro {
+  color: var(--muted);
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.verification-item + .verification-item {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--border);
+}
+
+.verification-title,
+.security-ok {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.check-icon { color: var(--good); font-weight: 800; }
+
+.matched-domain {
+  color: var(--good);
+  font-size: 14px;
+  margin: 7px 0 3px 24px;
+}
+
+.verification-item p,
+.security-analysis p {
+  color: var(--muted);
+  margin: 8px 0 0 24px;
+  font-size: 13px;
+}
+
+.ai-not-required {
+  border-color: rgba(16, 185, 129, .25);
+}
+
+.analysis-not-required {
+  margin: 0;
+  color: var(--muted);
+}
+.analysis-not-required strong { color: var(--text); }
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.analysis-field {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.analysis-field strong {
+  display: block;
+  line-height: 1.5;
+}
+
+.analysis-copy {
+  margin-top: 14px;
+  color: var(--muted);
+}
+
+.analysis-copy p {
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.reason-list {
+  margin: 0;
+  padding-left: 21px;
+  display: grid;
+  gap: 9px;
+  color: var(--text);
+}
+
+.reason-list li {
+  line-height: 1.6;
+  padding-left: 3px;
+}
+
+.reason-list li::marker { color: var(--bad); }
+.legitimate-reasons li::marker { color: var(--good); }
+
+.evidence-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.evidence-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 15px;
+}
+
+.phishing-evidence { border-top: 3px solid rgba(239, 68, 68, .75); }
+.legitimate-evidence { border-top: 3px solid rgba(16, 185, 129, .75); }
+
+.evidence-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 750;
+  margin-bottom: 8px;
+}
+
+.phishing-evidence .evidence-title { color: #fecaca; }
+.legitimate-evidence .evidence-title { color: #a7f3d0; }
+
+.evidence-card > p {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+
+.evidence-details {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr;
+  gap: 7px 12px;
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+}
+
+.evidence-details dt {
+  color: var(--muted);
+}
+
+.evidence-details dd {
+  margin: 0;
+  text-align: right;
+  word-break: break-word;
+}
+
+.evidence-danger { color: var(--bad); font-weight: 700; }
+.evidence-good { color: var(--good); font-weight: 700; }
+
+@media (max-width: 1050px) {
+  .result-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .result-header { flex-direction: column; }
+  .result-metrics,
+  .result-metrics.trusted-metrics,
+  .analysis-grid { grid-template-columns: 1fr; }
+  .scan-row { flex-direction: column; }
+  .scan-btn { width: 100%; }
+}
+
+/* ------------ Linked reason labels ------------ */
+.reason-label {
+  display: block;
+  margin-bottom: 2px;
+  font-weight: 750;
+}
+
+.phishing-reasons .reason-label { color: #fecaca; }
+.legitimate-reasons .reason-label { color: #a7f3d0; }
+
+.reason-list li > span {
+  color: var(--text);
+}

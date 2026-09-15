@@ -1,5 +1,36 @@
 import { useState } from 'react'
-import { scanURL, explainURL, reportURL } from '../../api.js'
+import { explainURL, reportURL, scanURL } from '../../api.js'
+
+const pct = (value) => `${((value ?? 0) * 100).toFixed(1)}%`
+
+const displayValue = (value) => {
+  if (value == null) return '-'
+  if (typeof value === 'number') {
+    if (Number.isInteger(value)) return String(value)
+    return Number(value).toFixed(5).replace(/0+$/, '').replace(/\.$/, '')
+  }
+  return String(value)
+}
+
+const signed = (value) => {
+  const n = Number(value || 0)
+  return `${n >= 0 ? '+' : ''}${n.toFixed(5)}`
+}
+
+const splitReason = (reason) => {
+  const text = String(reason || '')
+  const separator = ' — '
+  const index = text.indexOf(separator)
+
+  if (index === -1) {
+    return { label: '', text }
+  }
+
+  return {
+    label: text.slice(0, index),
+    text: text.slice(index + separator.length),
+  }
+}
 
 export default function Scanner() {
   const [url, setUrl] = useState('')
@@ -13,13 +44,17 @@ export default function Scanner() {
   const run = async () => {
     const target = url.trim()
     if (!target) return
+
     setBusy(true)
     setError('')
     setResult(null)
     setExplain(null)
+    setReported(false)
+
     try {
       const pred = await scanURL(target)
       setResult(pred)
+
       const exp = await explainURL(target)
       setExplain(exp)
     } catch (e) {
@@ -36,17 +71,20 @@ export default function Scanner() {
     setError('')
 
     try {
+      const reasons = explain?.why_detected?.length
+        ? explain.why_detected.join(' ')
+        : explain?.plain_text || 'Detected suspicious phishing characteristics'
+
       await reportURL({
         url: result.url,
-        attack_type: result.attack_type?.category || null,
-
-      detection_reason:
-        explain?.plain_text ||
-        "Detected suspicious phishing characteristics",
-    })
+        attack_type:
+          explain?.attack_analysis?.category ||
+          result.attack_type?.category ||
+          null,
+        detection_reason: reasons,
+      })
 
       setReported(true)
-
     } catch (e) {
       setError(e.message)
     } finally {
@@ -54,8 +92,14 @@ export default function Scanner() {
     }
   }
 
-  const isPhish = result?.prediction === 'phishing'
-  const riskClass = result?.risk_level?.toLowerCase()
+  const isTrusted = Boolean(result?.trusted_domain || result?.matched_domain)
+  const isPhish = Boolean(result) && !isTrusted && result.prediction === 'phishing'
+  const isLegitimate = Boolean(result) && !isTrusted && result.prediction === 'legitimate'
+  const riskClass = result?.risk_level?.toLowerCase() || 'low'
+
+  const attack = explain?.attack_analysis || result?.attack_type
+  const reasons = explain?.why_detected || []
+  const evidence = explain?.evidence || []
 
   return (
     <>
@@ -66,7 +110,7 @@ export default function Scanner() {
         </p>
       </div>
 
-      <section className="panel">
+      <section className="panel scanner-panel">
         <h3>Scan a URL</h3>
         <div className="scan-row">
           <input
@@ -85,37 +129,63 @@ export default function Scanner() {
       </section>
 
       {result && (
-        <div className={`verdict ${isPhish ? 'phish' : 'legit'}`}>
-          <div className="verdict-row">
+        <section className={`scan-result ${isTrusted ? 'trusted' : isPhish ? 'phish' : 'legit'}`}>
+          <div className="result-kicker">Scan Result</div>
+
+          <div className="result-header">
             <div>
-              <div className="verdict-label">
-                {isPhish ? 'PHISHING DETECTED' : 'LEGITIMATE'}
+              <div className="result-status">
+                <span className="status-icon" aria-hidden>
+                  {isPhish ? '⚠' : '✓'}
+                </span>
+                {isTrusted
+                  ? 'TRUSTED DOMAIN VERIFIED'
+                  : isPhish
+                    ? 'PHISHING DETECTED'
+                    : 'LEGITIMATE'}
               </div>
-              <div className="verdict-url mono">{result.url}</div>
+              <div className="result-url mono">{result.url}</div>
             </div>
-            <div className={`risk-pill risk-${riskClass}`}>
+
+            <span className={`risk-pill risk-${riskClass}`}>
               Risk: {result.risk_level}
+            </span>
+          </div>
+
+          {isTrusted ? (
+            <div className="result-metrics trusted-metrics">
+              <div className="metric-card">
+                <span className="metric-label">Security Status</span>
+                <strong>{result.security_status || 'Trusted Website'}</strong>
+              </div>
+              <div className="metric-card">
+                <span className="metric-label">Verification Method</span>
+                <strong>Trusted Domain Allowlist</strong>
+              </div>
             </div>
-          </div>
-
-          <div className="gauge-track">
-            <div
-              className="gauge-fill"
-              style={{ width: `${(result.phishing_probability * 100).toFixed(1)}%` }}
-            />
-          </div>
-          <div className="gauge-caption">
-            Phishing {(result.phishing_probability * 100).toFixed(1)}% ·{' '}
-            Legitimate {(result.legitimate_probability * 100).toFixed(1)}%
-          </div>
-
-          <div className="verdict-meta">
-            <span>Model used: <b>{result.model_used}</b></span>
-            <span>Confidence: <b>{(result.confidence * 100).toFixed(1)}%</b></span>
-          </div>
+          ) : (
+            <div className="result-metrics">
+              <div className="metric-card">
+                <span className="metric-label">Phishing Probability</span>
+                <strong>{pct(result.phishing_probability)}</strong>
+              </div>
+              <div className="metric-card">
+                <span className="metric-label">Legitimate Probability</span>
+                <strong>{pct(result.legitimate_probability)}</strong>
+              </div>
+              <div className="metric-card">
+                <span className="metric-label">Model Used</span>
+                <strong>{result.model_used}</strong>
+              </div>
+              <div className="metric-card">
+                <span className="metric-label">Confidence</span>
+                <strong>{pct(result.confidence)}</strong>
+              </div>
+            </div>
+          )}
 
           {isPhish && (
-            <div className="report-section">
+            <div className="result-actions">
               <button
                 className="report-btn"
                 onClick={handleReport}
@@ -124,86 +194,207 @@ export default function Scanner() {
                 {reported
                   ? 'URL Reported'
                   : reporting
-                  ? 'Reporting...'
-                  : 'Report URL'}
+                    ? 'Reporting…'
+                    : 'Report URL'}
               </button>
             </div>
           )}
-
-          {result.attack_type && (
-            <div className="attack-box">
-              <h4>Phishing Attack Type</h4>
-
-              <p>
-                <b>{result.attack_type.category}</b>
-              </p>
-
-              <ul>
-                {result.attack_type.reason.map((r, index) => (
-                  <li key={index}>{r}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {result.matched_domain && (
-            <div className="trusted-banner">
-              <b>Trusted domain allowlist:</b> matched
-              &nbsp;<span className="mono">{result.matched_domain}</span>.
-              Well-known reputable sites bypass ML classification to
-              prevent false positives, mirroring how real detection
-              systems combine ML with reputation lists.
-            </div>
-          )}
-
-          {explain?.plain_text && (
-            <p className="plain-text">{explain.plain_text}</p>
-          )}
-        </div>
+        </section>
       )}
 
-      {result && !result.matched_domain && (
-        <div className="xai-grid">
-          <section className="panel">
-            <h3>SHAP - feature contributions</h3>
-            {explain ? (
-              <>
-                <p className="xai-note">{explain.shap.note}</p>
-                {explain.shap.top_features.map((f) => (
-                  <div className="xai-item" key={f.feature}>
-                    <span className="xai-name mono">{f.feature}</span>
-                    <span className={f.shap_value >= 0 ? 'w-neg' : 'w-pos'}>
-                      {f.shap_value >= 0 ? '+' : ''}
-                      {f.shap_value.toFixed(4)}
-                    </span>
-                  </div>
+      {isTrusted && (
+        <>
+          <section className="panel result-section trusted-section">
+            <h3>Trusted Domain Verification</h3>
+
+            <div className="verification-item">
+              <div className="verification-title">
+                <span className="check-icon">✓</span>
+                Official domain matched:
+              </div>
+              <div className="matched-domain mono">{result.matched_domain}</div>
+              <p>
+                This website has been verified as an official trusted domain.
+                The domain reputation matches known legitimate services,
+                indicating a low risk of phishing activity.
+              </p>
+            </div>
+
+            <div className="verification-item">
+              <div className="verification-title">
+                <span className="check-icon">✓</span>
+                URL Pattern Analysis
+              </div>
+              <p>
+                The URL structure does not contain suspicious characteristics
+                commonly observed in phishing websites.
+              </p>
+            </div>
+          </section>
+
+          <section className="panel result-section ai-not-required">
+            <h3>AI Analysis</h3>
+            <p className="analysis-not-required">
+              <strong>Not required.</strong> Trusted domain verification completed
+              successfully.
+            </p>
+          </section>
+        </>
+      )}
+
+      {isPhish && (
+        <>
+          <section className="panel result-section attack-analysis">
+            <h3>Phishing Attack Analysis</h3>
+
+            <div className="analysis-grid">
+              <div className="analysis-field">
+                <span className="analysis-label">Attack Category</span>
+                <strong>{attack?.category || 'Phishing Attack'}</strong>
+              </div>
+              <div className="analysis-field">
+                <span className="analysis-label">Attack Technique</span>
+                <strong>
+                  {attack?.technique || attack?.techniques?.join(' / ') || 'Suspicious URL Pattern'}
+                </strong>
+              </div>
+            </div>
+
+            {attack?.indicators?.length > 0 && (
+              <div className="analysis-copy">
+                {attack.indicators.slice(0, 3).map((text, index) => (
+                  <p key={index}>{text}</p>
                 ))}
-              </>
-            ) : (
-              <p className="empty">Computing explanation…</p>
+              </div>
             )}
           </section>
 
-          <section className="panel">
-            <h3>LIME - local rules</h3>
-            {explain ? (
-              <>
-                <p className="xai-note">{explain.lime.note}</p>
-                {explain.lime.top_rules.map((r) => (
-                  <div className="xai-item" key={r.rule}>
-                    <span className="xai-name mono">{r.rule}</span>
-                    <span className={r.weight >= 0 ? 'w-neg' : 'w-pos'}>
-                      {r.weight >= 0 ? '+' : ''}
-                      {r.weight.toFixed(4)}
-                    </span>
-                  </div>
-                ))}
-              </>
-            ) : (
+          <section className="panel result-section">
+            <h3>Why was this detected?</h3>
+            <p className="section-intro">
+              This URL was classified as <strong>PHISHING</strong> with{' '}
+              <strong>{result.risk_level.toLowerCase()} risk</strong>. Each point below
+              corresponds directly to an AI Explanation Evidence card:
+            </p>
+
+            <ul className="reason-list phishing-reasons">
+              {(reasons.length ? reasons : attack?.reason || []).slice(0, 3).map((reason, index) => {
+                const parsed = splitReason(reason)
+                return (
+                  <li key={index}>
+                    {parsed.label && <strong className="reason-label">{parsed.label}</strong>}
+                    <span>{parsed.text}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+
+          <section className="panel result-section">
+            <h3>AI Explanation Evidence</h3>
+            <p className="section-intro">
+              Only the most important model contributors are shown.
+            </p>
+
+            {!explain ? (
               <p className="empty">Computing explanation…</p>
+            ) : evidence.length === 0 ? (
+              <p className="empty">No strong explanation evidence was available.</p>
+            ) : (
+              <div className="evidence-list">
+                {evidence.map((item) => (
+                  <article className="evidence-card phishing-evidence" key={item.feature}>
+                    <div className="evidence-title">
+                      <span aria-hidden>⚠</span>
+                      {item.title}
+                    </div>
+                    {item.description && <p>{item.description}</p>}
+                    <dl className="evidence-details">
+                      <dt>Feature</dt>
+                      <dd className="mono">{item.feature}</dd>
+                      <dt>Detected Value</dt>
+                      <dd className="mono">{displayValue(item.detected_value)}</dd>
+                      <dt>SHAP Contribution</dt>
+                      <dd className="mono evidence-danger">{signed(item.shap_contribution)}</dd>
+                      <dt>LIME Contribution</dt>
+                      <dd className="mono evidence-danger">{signed(item.lime_contribution)}</dd>
+                    </dl>
+                  </article>
+                ))}
+              </div>
             )}
           </section>
-        </div>
+        </>
+      )}
+
+      {isLegitimate && (
+        <>
+          <section className="panel result-section security-analysis">
+            <h3>Security Analysis</h3>
+            <div className="security-ok">
+              <span className="check-icon">✓</span>
+              <strong>No suspicious phishing indicators were detected.</strong>
+            </div>
+            <p>
+              The URL structure matches characteristics commonly associated with
+              legitimate websites.
+            </p>
+          </section>
+
+          <section className="panel result-section">
+            <h3>Why was this classified as legitimate?</h3>
+            <p className="section-intro">
+              The AI model identified no significant phishing patterns from the URL.
+              Each point below corresponds directly to an AI Explanation Evidence card:
+            </p>
+            <ul className="reason-list legitimate-reasons">
+              {reasons.slice(0, 3).map((reason, index) => {
+                const parsed = splitReason(reason)
+                return (
+                  <li key={index}>
+                    {parsed.label && <strong className="reason-label">{parsed.label}</strong>}
+                    <span>{parsed.text}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+
+          <section className="panel result-section">
+            <h3>AI Explanation Evidence</h3>
+            <p className="section-intro">
+              Only evidence supporting the legitimate classification is shown.
+            </p>
+
+            {!explain ? (
+              <p className="empty">Computing explanation…</p>
+            ) : evidence.length === 0 ? (
+              <p className="empty">No strong supporting evidence was available.</p>
+            ) : (
+              <div className="evidence-list">
+                {evidence.map((item) => (
+                  <article className="evidence-card legitimate-evidence" key={item.feature}>
+                    <div className="evidence-title">
+                      <span className="check-icon" aria-hidden>✓</span>
+                      {item.title}
+                    </div>
+                    {item.description && <p>{item.description}</p>}
+                    <dl className="evidence-details">
+                      <dt>Feature</dt>
+                      <dd className="mono">{item.feature}</dd>
+                      <dt>Detected Value</dt>
+                      <dd className="mono">{displayValue(item.detected_value)}</dd>
+                      <dt>Contribution</dt>
+                      <dd className="evidence-good">
+                        {item.support || 'Supports legitimate classification'}
+                      </dd>
+                    </dl>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        </>
       )}
     </>
   )
