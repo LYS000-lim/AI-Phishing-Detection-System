@@ -1,5 +1,5 @@
 from typing import List, Optional
-
+from urllib.parse import urlparse
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import desc, func
@@ -24,6 +24,51 @@ from .phishing_type import detect_phishing_type
 
 router = APIRouter(tags=["user"])
 
+def check_trusted_domain_safety(url):
+    """
+    Extra verification before trusted-domain bypass.
+    Only checks domain-level risks.
+    """
+
+    parsed = urlparse(url)
+
+    domain = parsed.netloc.lower()
+
+    # remove username/password part
+    if "@" in domain:
+        return False
+
+
+    suspicious_domain_keywords = [
+        "login",
+        "verify",
+        "verification",
+        "secure",
+        "security",
+        "update",
+        "account",
+        "password",
+        "confirm"
+    ]
+
+
+    for keyword in suspicious_domain_keywords:
+        if keyword in domain:
+            return False
+
+
+    suspicious_patterns = [
+        "%00",
+        "%20"
+    ]
+
+
+    for pattern in suspicious_patterns:
+        if pattern in url.lower():
+            return False
+
+
+    return True
 
 # ---------------------------------------------------------------------------
 # Scan / predict
@@ -38,39 +83,25 @@ def _predict_and_log(
     # classification entirely. This is a separate result state from an ML
     # legitimate prediction and therefore returns trusted_domain=True.
     if is_trusted(url):
-        domain = matched_domain(url)
-        features = extract_features(url)
-        record = Detection(
-            user_id=user.id,
-            url=url,
-            prediction="legitimate",
-            label=0,
-            confidence=1.0,
-            phishing_probability=0.0,
-            risk_level="Low",
-            model_used="TrustedAllowlist",
-            ip_address=ip,
-        )
-        db.add(record)
-        db.commit()
-        db.refresh(record)
-        return {
-            "id": record.id,
-            "url": url,
-            "prediction": "legitimate",
-            "label": 0,
-            "confidence": 1.0,
-            "phishing_probability": 0.0,
-            "legitimate_probability": 1.0,
-            "risk_level": "Low",
-            "model_used": "TrustedAllowlist",
-            "trusted_domain": True,
-            "matched_domain": domain,
-            "security_status": "Trusted Website",
-            "features": features,
-            "attack_type": None,
-            "created_at": record.created_at.isoformat(),
-        }
+
+        trusted_safe = check_trusted_domain_safety(url)
+
+        if trusted_safe:
+
+            return {
+                "prediction": "legitimate",
+                "risk": "Low",
+                "model_used": "TrustedAllowlist",
+                "confidence": 100,
+                "trusted_domain": True,
+                "message":
+                "Trusted domain verification completed successfully."
+            }
+
+        else:
+            # Trusted domain contains suspicious patterns
+            # Continue to ML analysis
+            pass
 
     if MODEL is None:
         raise HTTPException(
@@ -166,7 +197,7 @@ def scan_batch(
 def explain(req: URLRequest, user: User = Depends(current_user)):
     # Trusted-domain results are decided by reputation verification, not by
     # the ML model. Return a dedicated explanation state with no SHAP/LIME.
-    if is_trusted(req.url):
+    if is_trusted(req.url) and check_trusted_domain_safety(req.url):
         domain = matched_domain(req.url)
         return {
             "url": req.url,
