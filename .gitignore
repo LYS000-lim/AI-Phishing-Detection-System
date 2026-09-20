@@ -1,6 +1,19 @@
+# Python
 .venv/
 __pycache__/
-.ipynb_checkpoints/
 *.pyc
+.ipynb_checkpoints/
+
+# Node
 node_modules/
+
+# Data files
+*.csv
+
+# Model files
+*.joblib
+*.pkl
+
+# Outputs
+outputs/
 *.db

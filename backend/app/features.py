@@ -1,7 +1,7 @@
 import ipaddress
 import os
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import joblib
 import numpy as np
@@ -45,6 +45,32 @@ def _is_ip(host: str) -> int:
         return 0
 
 
+def canonicalize_url(url: str) -> str:
+    """
+    Ensure a scheme, then strip a leading "www." host label.
+
+    Training data (PhiUSIIL) recorded every legitimate URL as "www.<domain>"
+    but phishing URLs inconsistently, so without this a bare domain like
+    "chatgpt.com" reads as a strong phishing signal purely because it lacks
+    "www." — a labeling artifact, not a real distinction. Canonicalizing
+    here (used by both the lookup-table builders and compute_features)
+    makes "www.example.com" and "example.com" score identically everywhere.
+    """
+    raw = url.strip()
+    if not raw.lower().startswith(("http://", "https://")):
+        raw = "http://" + raw
+
+    parsed = urlparse(raw)
+    netloc = parsed.netloc
+    host = netloc.split("@")[-1].split(":")[0]
+    if host.lower().startswith("www."):
+        netloc = netloc[: len(netloc) - len(host)] + host[4:]
+        parsed = parsed._replace(netloc=netloc)
+        raw = urlunparse(parsed)
+
+    return raw
+
+
 def compute_features(url: str, tld_lookup: dict, char_lookup: dict) -> dict:
     """
     Pure function: compute the 20 URL features for a raw URL string
@@ -52,9 +78,7 @@ def compute_features(url: str, tld_lookup: dict, char_lookup: dict) -> dict:
     and the inference path so the model sees identical feature values
     in both phases.
     """
-    raw = url.strip()
-    if not raw.lower().startswith(("http://", "https://")):
-        raw = "http://" + raw
+    raw = canonicalize_url(url)
 
     parsed = urlparse(raw)
     domain = parsed.netloc.lower()

@@ -1,7 +1,25 @@
 from datetime import datetime
 from typing import List, Literal, Optional
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+_URL_MAX_LEN = 2048
+
+
+def _validate_url(v: str) -> str:
+    """Reject empty/garbage/oversized input before it reaches feature
+    extraction -- min_length=4 alone lets "asdf" through as a "URL"."""
+    v = v.strip()
+    if not v or " " in v:
+        raise ValueError("Enter a valid website URL, e.g. https://example.com")
+    if len(v) > _URL_MAX_LEN:
+        raise ValueError(f"URL too long (max {_URL_MAX_LEN} characters)")
+    raw = v if v.lower().startswith(("http://", "https://")) else "http://" + v
+    host = urlparse(raw).netloc.split("@")[-1].split(":")[0]
+    if not host or "." not in host:
+        raise ValueError("Enter a valid website URL, e.g. https://example.com")
+    return v
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +96,8 @@ class AdminUserUpdate(BaseModel):
 class URLRequest(BaseModel):
     url: str = Field(..., min_length=4, examples=["https://example.com"])
 
+    _check_url = field_validator("url")(_validate_url)
+
 class ReportURLRequest(BaseModel):
     url: str = Field(
         ...,
@@ -91,8 +111,14 @@ class ReportURLRequest(BaseModel):
 
     detection_reason: Optional[str] = None
 
+    _check_url = field_validator("url")(_validate_url)
+
 class BatchRequest(BaseModel):
     urls: List[str] = Field(..., min_length=1, max_length=100)
+
+    _check_urls = field_validator("urls")(
+        lambda cls, v: [_validate_url(u) for u in v]
+    )
 
 
 class ShapContribution(BaseModel):

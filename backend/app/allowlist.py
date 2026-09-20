@@ -1,7 +1,16 @@
 from urllib.parse import urlparse
 
+# SECURITY NOTE: this is a hard bypass -- a registrable-domain STRING match,
+# nothing else (no TLS/cert check, no content check, no live lookup). A
+# match skips the ML model entirely and returns "legitimate" outright, so
+# treat it as a convenience shortcut for well-known domains, not a security
+# guarantee. Future hardening: verify the connection (e.g. certificate CN/SAN)
+# before trusting, rather than trusting on domain string alone.
+#
 # Registrable domains (no protocol, no path). Subdomains match automatically:
-# "mail.google.com" is trusted because "google.com" is on the list.
+# "mail.google.com" is trusted because "google.com" is on the list. A more
+# specific entry (e.g. "developer.mozilla.org") also matches directly, in
+# addition to its registrable domain ("mozilla.org") if that were listed too.
 TRUSTED_DOMAINS = {
     # Search engines and AI assistants
     "google.com", "bing.com", "duckduckgo.com", "yahoo.com", "yandex.com",
@@ -120,10 +129,35 @@ def _registrable_domain(host: str) -> str:
     return last_two
 
 
+def _domain_candidates(host: str) -> list:
+    """
+    All suffixes of host from the full host down to (and including) its
+    registrable domain, most specific first, e.g.:
+        "developer.mozilla.org" -> ["developer.mozilla.org", "mozilla.org"]
+        "mail.google.com"       -> ["mail.google.com", "google.com"]
+
+    Lets a listed entry match whether it's the registrable domain (the
+    common case -- subdomains match through it) or a specific subdomain
+    entry (e.g. "developer.mozilla.org"), without ever matching on a bare
+    TLD/suffix below the registrable domain.
+    """
+    host = (host or "").lower().strip().split(":")[0]
+    if not host:
+        return []
+    parts = host.split(".")
+    if len(parts) < 2:
+        return [host]
+
+    registrable = _registrable_domain(host)
+    reg_len = len(registrable.split("."))
+    return [".".join(parts[i:]) for i in range(0, len(parts) - reg_len + 1)]
+
+
 def is_trusted(url: str) -> bool:
     """
-    Return True if the URL's registrable domain is on the trusted
-    allowlist. Handles URLs with or without a scheme.
+    Return True if the URL's host (or any of its parent domains, down to
+    its registrable domain) is on the trusted allowlist. Handles URLs with
+    or without a scheme.
     """
     if not url:
         return False
@@ -132,7 +166,7 @@ def is_trusted(url: str) -> bool:
         if not raw.lower().startswith(("http://", "https://")):
             raw = "http://" + raw
         host = urlparse(raw).netloc
-        return _registrable_domain(host) in TRUSTED_DOMAINS
+        return any(c in TRUSTED_DOMAINS for c in _domain_candidates(host))
     except Exception:
         return False
 
@@ -145,7 +179,10 @@ def matched_domain(url: str) -> str:
         raw = url.strip()
         if not raw.lower().startswith(("http://", "https://")):
             raw = "http://" + raw
-        reg = _registrable_domain(urlparse(raw).netloc)
-        return reg if reg in TRUSTED_DOMAINS else ""
+        host = urlparse(raw).netloc
+        for c in _domain_candidates(host):
+            if c in TRUSTED_DOMAINS:
+                return c
+        return ""
     except Exception:
         return ""
