@@ -258,7 +258,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         features,
         shap_out,
         attack_analysis=attack_analysis,
-        limit=3,
+        limit=4,
     )
     evidence = build_evidence(
         prediction,

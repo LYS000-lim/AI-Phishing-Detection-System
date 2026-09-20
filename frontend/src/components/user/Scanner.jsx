@@ -3,6 +3,32 @@ import { explainURL, reportURL, scanURL } from '../../api.js'
 
 const pct = (value) => `${((value ?? 0) * 100).toFixed(1)}%`
 
+// Categorizes the raw model confidence (max class probability, always >=50%
+// since the model picks the higher-probability class) into a plain-language
+// label + short explanation, so users see "Medium" instead of just "58%".
+// Display-only — does not change the underlying probability or verdict.
+const confidenceInfo = (value, prediction) => {
+  const value100 = (value ?? 0) * 100
+  const noun = prediction === 'phishing' ? 'phishing' : 'legitimate'
+
+  if (value100 >= 80) {
+    return {
+      label: 'High',
+      text: `The model found strong indicators that match patterns commonly associated with ${noun} URLs.`,
+    }
+  }
+  if (value100 >= 60) {
+    return {
+      label: 'Medium',
+      text: 'The model detected some suspicious characteristics, but some URL patterns overlap between phishing and legitimate websites. The result should be interpreted together with the explanation evidence below.',
+    }
+  }
+  return {
+    label: 'Low',
+    text: 'The URL contains mixed characteristics, and the model found limited evidence strongly supporting either classification.',
+  }
+}
+
 const displayValue = (value) => {
   if (value == null) return '-'
   if (typeof value === 'number') {
@@ -15,6 +41,50 @@ const displayValue = (value) => {
 const signed = (value) => {
   const n = Number(value || 0)
   return `${n >= 0 ? '+' : ''}${n.toFixed(5)}`
+}
+
+const BOOLEAN_FEATURES = new Set(['IsHTTPS', 'IsDomainIP', 'HasObfuscation'])
+
+const COUNT_UNITS = {
+  URLLength: 'characters',
+  DomainLength: 'characters',
+  NoOfLettersInURL: 'letters',
+  NoOfDegitsInURL: 'digits',
+  NoOfSubDomain: 'subdomains',
+  TLDLength: 'characters',
+  NoOfObfuscatedChar: 'characters',
+  NoOfEqualsInURL: "'=' characters",
+  NoOfQMarkInURL: "'?' characters",
+  NoOfAmpersandInURL: "'&' characters",
+  NoOfOtherSpecialCharsInURL: 'characters',
+}
+
+const RATIO_FEATURES = new Set([
+  'LetterRatioInURL',
+  'DegitRatioInURL',
+  'SpacialCharRatioInURL',
+  'ObfuscationRatio',
+])
+
+// Renders a raw feature value in plain language for non-technical readers.
+// The mono "Feature" row alongside it still shows the raw code (e.g. URLLength)
+// for technical/academic transparency.
+const formatDetectedValue = (feature, value) => {
+  if (value == null) return '-'
+
+  if (BOOLEAN_FEATURES.has(feature)) {
+    return Number(value) === 1 ? 'Yes' : 'No'
+  }
+
+  if (RATIO_FEATURES.has(feature)) {
+    return pct(value)
+  }
+
+  if (COUNT_UNITS[feature]) {
+    return `${displayValue(value)} ${COUNT_UNITS[feature]}`
+  }
+
+  return displayValue(value)
 }
 
 const splitReason = (reason) => {
@@ -179,9 +249,16 @@ export default function Scanner() {
               </div>
               <div className="metric-card">
                 <span className="metric-label">Confidence</span>
-                <strong>{pct(result.confidence)}</strong>
+                <strong>{confidenceInfo(result.confidence, result.prediction).label}</strong>
+                <span className="metric-sub">{pct(result.confidence)}</span>
               </div>
             </div>
+          )}
+
+          {!isTrusted && (
+            <p className="confidence-note">
+              {confidenceInfo(result.confidence, result.prediction).text}
+            </p>
           )}
 
           {isPhish && (
@@ -273,12 +350,13 @@ export default function Scanner() {
             <h3>Why was this detected?</h3>
             <p className="section-intro">
               This URL was classified as <strong>PHISHING</strong> with{' '}
-              <strong>{result.risk_level.toLowerCase()} risk</strong>. Each point below
-              corresponds directly to an AI Explanation Evidence card:
+              <strong>{result.risk_level.toLowerCase()} risk</strong> because several
+              characteristics matched patterns commonly found in phishing websites.
             </p>
 
+            <p className="reason-lead">The AI identified:</p>
             <ul className="reason-list phishing-reasons">
-              {(reasons.length ? reasons : attack?.reason || []).slice(0, 3).map((reason, index) => {
+              {(reasons.length ? reasons : attack?.reason || []).slice(0, 4).map((reason, index) => {
                 const parsed = splitReason(reason)
                 return (
                   <li key={index}>
@@ -288,6 +366,11 @@ export default function Scanner() {
                 )
               })}
             </ul>
+
+            <p className="section-footnote">
+              The individual feature contributions are shown in the AI Explanation
+              Evidence section below.
+            </p>
           </section>
 
           <section className="panel result-section">
@@ -308,12 +391,23 @@ export default function Scanner() {
                       <span aria-hidden>⚠</span>
                       {item.title}
                     </div>
-                    {item.description && <p>{item.description}</p>}
+                    {item.found && (
+                      <p>
+                        <span className="evidence-kicker">What the AI found: </span>
+                        {item.found}
+                      </p>
+                    )}
+                    {item.why_it_matters && (
+                      <p>
+                        <span className="evidence-kicker">Why this matters: </span>
+                        {item.why_it_matters}
+                      </p>
+                    )}
                     <dl className="evidence-details">
                       <dt>Feature</dt>
                       <dd className="mono">{item.feature}</dd>
                       <dt>Detected Value</dt>
-                      <dd className="mono">{displayValue(item.detected_value)}</dd>
+                      <dd className="mono">{formatDetectedValue(item.feature, item.detected_value)}</dd>
                       <dt>SHAP Contribution</dt>
                       <dd className="mono evidence-danger">{signed(item.shap_contribution)}</dd>
                       <dt>LIME Contribution</dt>
@@ -345,7 +439,9 @@ export default function Scanner() {
             <h3>Why was this classified as legitimate?</h3>
             <p className="section-intro">
               The AI model identified no significant phishing patterns from the URL.
-              Each point below corresponds directly to an AI Explanation Evidence card:
+              The explanation below is in plain language — the AI Explanation
+              Evidence section further down shows the technical model signals
+              (SHAP/LIME) behind it:
             </p>
             <ul className="reason-list legitimate-reasons">
               {reasons.slice(0, 3).map((reason, index) => {
@@ -378,12 +474,23 @@ export default function Scanner() {
                       <span className="check-icon" aria-hidden>✓</span>
                       {item.title}
                     </div>
-                    {item.description && <p>{item.description}</p>}
+                    {item.found && (
+                      <p>
+                        <span className="evidence-kicker">What the AI found: </span>
+                        {item.found}
+                      </p>
+                    )}
+                    {item.why_it_matters && (
+                      <p>
+                        <span className="evidence-kicker">Why this matters: </span>
+                        {item.why_it_matters}
+                      </p>
+                    )}
                     <dl className="evidence-details">
                       <dt>Feature</dt>
                       <dd className="mono">{item.feature}</dd>
                       <dt>Detected Value</dt>
-                      <dd className="mono">{displayValue(item.detected_value)}</dd>
+                      <dd className="mono">{formatDetectedValue(item.feature, item.detected_value)}</dd>
                       <dt>Contribution</dt>
                       <dd className="evidence-good">
                         {item.support || 'Supports legitimate classification'}

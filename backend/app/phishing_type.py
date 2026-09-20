@@ -298,8 +298,27 @@ def detect_phishing_type(url: str, features: dict) -> dict:
         )
 
     if features.get("NoOfSubDomain", 0) >= 3:
+        techniques.append("Subdomain Manipulation")
         indicators.append(
-            "The URL contains multiple subdomains, a structure that can be used to disguise the real registered domain."
+            "The URL contains multiple subdomains, a structure that can be used to disguise the real registered domain "
+            '(for example, "login.paypal.attacker.com" can look like it belongs to PayPal when the real domain is attacker.com).'
+        )
+
+    if features.get("TLDLegitimateProb", 0.5) < 0.3:
+        techniques.append("Suspicious Top-Level Domain")
+        indicators.append(
+            "The domain suffix used by this URL is rarely seen on legitimate websites in the training data, "
+            "since cheap or loosely-controlled suffixes like this are disproportionately used for phishing."
+        )
+
+    if (
+        features.get("DegitRatioInURL", 0) > 0.15
+        and features.get("IsDomainIP") != 1
+    ):
+        techniques.append("Randomized / Numeric Domain")
+        indicators.append(
+            "The address contains an unusually high number of digits, a pattern common in automatically "
+            "generated or randomized phishing domains."
         )
 
     if not techniques:

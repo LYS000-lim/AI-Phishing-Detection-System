@@ -484,6 +484,19 @@ body {
   word-break: break-word;
 }
 
+.metric-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.confidence-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .result-actions {
   display: flex;
   justify-content: flex-start;
@@ -597,6 +610,19 @@ body {
   font-size: 13px;
 }
 
+.reason-lead {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.section-footnote {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .reason-list {
   margin: 0;
   padding-left: 21px;
@@ -644,6 +670,14 @@ body {
   color: var(--muted);
   font-size: 12px;
   margin: 0 0 12px;
+}
+
+.evidence-kicker {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .evidence-details {
