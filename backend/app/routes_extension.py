@@ -1,14 +1,16 @@
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from .allowlist import is_trusted, matched_domain
 from .database import get_db
 from .features import extract_features, feature_vector
 from .explanations import risk_level
 from .ml_state import MODEL, model_info
 from .phishing_type import detect_phishing_type
-from .models import ExtensionReport
+from .models import BlockedURL, ExtensionReport
 from .schemas import ExtensionReportCreate, ExtensionReportOut
 
 
@@ -41,6 +43,22 @@ def extension_scan(
             status_code=400,
             detail="URL is required",
         )
+
+    # Reputation-list bypass: well-known trusted domains skip ML
+    # classification entirely, matching routes_user.py's _predict_and_log.
+    if is_trusted(url):
+        return {
+            "url": url,
+            "prediction": "legitimate",
+            "confidence": 1.0,
+            "phishing_probability": 0.0,
+            "legitimate_probability": 1.0,
+            "risk_level": "Low",
+            "model_used": "TrustedAllowlist",
+            "trusted_domain": True,
+            "matched_domain": matched_domain(url),
+            "attack_type": None,
+        }
 
     if MODEL is None:
         raise HTTPException(
@@ -93,6 +111,7 @@ def extension_scan(
             ),
             "risk_level": risk,
             "model_used": model_info()["name"],
+            "trusted_domain": False,
             "attack_type": attack_type,
         }
 
@@ -104,6 +123,49 @@ def extension_scan(
             detail=f"Could not process URL: {exc}",
         )
 
+
+# ==========================================================
+# Blacklist Check
+# ==========================================================
+
+def _hostname(url: str) -> str:
+    raw = url.strip()
+    if not raw.lower().startswith(("http://", "https://")):
+        raw = "http://" + raw
+    return (urlparse(raw).hostname or "").lower()
+
+
+@router.get("/check-blacklist")
+def check_blacklist(
+    url: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Anonymous blacklist lookup used by the extension before/instead of
+    running the ML model, so admin-confirmed phishing domains are blocked
+    immediately on every future visit.
+    """
+
+    domain = _hostname(url)
+
+    if not domain:
+        return {"blocked": False}
+
+    entry = (
+        db.query(BlockedURL)
+        .filter(BlockedURL.domain == domain)
+        .first()
+    )
+
+    if not entry:
+        return {"blocked": False}
+
+    return {
+        "blocked": True,
+        "domain": entry.domain,
+        "risk_level": entry.risk_level,
+        "reason": entry.reason,
+    }
 
 
 # ==========================================================

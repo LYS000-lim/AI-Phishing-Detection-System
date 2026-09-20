@@ -156,3 +156,43 @@ class ExtensionReport(Base):
         DateTime,
         nullable=True,
     )
+
+
+class BlockedURL(Base):
+    __tablename__ = "blocked_urls"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    url = Column(
+        Text,
+        nullable=False,
+    )
+
+    domain = Column(
+        String(255),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    risk_level = Column(
+        String(8),
+        nullable=False,
+        default="High",
+    )
+
+    reason = Column(
+        Text,
+        nullable=True,
+    )
+
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=_utc_now,
+        index=True,
+    )

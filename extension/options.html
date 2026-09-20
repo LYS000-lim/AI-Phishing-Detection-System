@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>PhishGuard AI — Settings</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="pg-page">
+    <h1>&#128737; PhishGuard AI — Settings</h1>
+    <p class="pg-subtitle">Manage how PhishGuard protects this browser.</p>
+
+    <div class="pg-section">
+        <h2>Detection History</h2>
+        <p>
+            Allow PhishGuard AI to save a local history of the websites it
+            checks (URL, result, risk level, confidence, attack type, time)?
+            This history is stored only on this device and you can change
+            this choice at any time.
+        </p>
+
+        <button class="pg-btn" id="pg-enable-history">Enable History Recording</button>
+        <button class="pg-btn secondary" id="pg-disable-history">Disable History Recording</button>
+
+        <div style="margin-top:16px;">
+            <div class="pg-label">History Recording Status:</div>
+            <div class="pg-value" id="pg-history-status" style="font-size:16px;margin-top:4px;">Loading...</div>
+        </div>
+    </div>
+
+    <div class="pg-section">
+        <h2>Recently Blocked URLs</h2>
+        <p>Websites you chose to "Block URL" from a warning page.</p>
+        <div id="pg-blocked-list" class="pg-empty">No locally blocked URLs.</div>
+        <div class="pg-link-row" id="pg-view-all-row" style="display:none;">
+            <a class="pg-btn secondary" href="blocked.html" target="_blank">View All Blocked URLs</a>
+        </div>
+    </div>
+
+    <div class="pg-link-row">
+        <a class="pg-btn secondary" href="history.html" target="_blank">View Detection History</a>
+    </div>
+</div>
+
+<script src="common.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

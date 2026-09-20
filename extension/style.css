@@ -15,7 +15,13 @@
 
     justify-content: center;
 
-    align-items: center;
+    /* was "center" — with the full detail block (reasons, recommendation,
+       4 buttons) the card can be taller than the viewport; centering it
+       with no overflow handling clipped the bottom (e.g. the Block URL
+       button) with no way to scroll to it. */
+    align-items: flex-start;
+
+    overflow-y: auto;
 
     z-index: 2147483647;
 
@@ -41,6 +47,8 @@
 
     padding: 40px;
 
+    margin: 40px 0;
+
     text-align: center;
 
     color: white;
@@ -63,6 +71,24 @@
     margin-bottom:
     10px;
 
+}
+
+/* Neutral/informational variant (e.g. "Continue Access allowed this site,
+   but it's unreachable") — distinct from the red danger styling so it
+   never reads as another warning/error, and doesn't imitate a Chrome
+   error page. */
+.pg-card.pg-neutral {
+    box-shadow: 0 0 40px rgba(56, 189, 248, 0.35);
+}
+
+.pg-card.pg-neutral h1 {
+    color: #38bdf8;
+}
+
+.pg-neutral-note {
+    background: #0c2a3d;
+    border-left: 4px solid #38bdf8;
+    color: #bae6fd;
 }
 
 
@@ -195,4 +221,204 @@
     opacity:
     0.85;
 
+}
+
+#pg-block {
+    background: #7f1d1d;
+    color: white;
+}
+
+.pg-blocked-banner {
+    background: #450a0a;
+    border: 1px solid #ff3b3b;
+    border-radius: 8px;
+    padding: 10px 15px;
+    margin-bottom: 15px;
+    color: #fecaca;
+    text-align: left;
+}
+
+.pg-reasons {
+    text-align: left;
+    margin: 8px 0 0;
+    padding-left: 18px;
+    color: #cbd5e1;
+}
+
+.pg-reasons li {
+    margin: 6px 0;
+}
+
+.pg-recommendation {
+    margin-top: 15px;
+    background: #431407;
+    border-left: 4px solid #f97316;
+    padding: 12px 15px;
+    border-radius: 8px;
+    text-align: left;
+    color: #fed7aa;
+}
+
+/* ---------------------------------------------------------- */
+/* Shared "utility page" chrome for popup / options / history */
+/* ---------------------------------------------------------- */
+
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: #0b0f1a;
+    color: #e5e7eb;
+}
+
+.pg-page {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 24px 20px 40px;
+}
+
+.pg-page h1 {
+    font-size: 20px;
+    margin-bottom: 4px;
+}
+
+.pg-page .pg-subtitle {
+    color: #94a3b8;
+    margin-bottom: 20px;
+}
+
+.pg-section {
+    background: #111827;
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+}
+
+.pg-section h2 {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #94a3b8;
+    margin: 0 0 10px;
+}
+
+.pg-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 8px 0;
+    word-break: break-word;
+}
+
+.pg-row .pg-label {
+    color: #94a3b8;
+    flex-shrink: 0;
+}
+
+.pg-row .pg-value {
+    text-align: right;
+}
+
+.pg-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.pg-badge.safe {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+}
+
+.pg-badge.danger {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+}
+
+.pg-badge.risk-low { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+.pg-badge.risk-medium { background: rgba(234, 179, 8, 0.15); color: #facc15; }
+.pg-badge.risk-high { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+
+.pg-status-on {
+    color: #4ade80;
+    font-weight: bold;
+}
+
+.pg-status-off {
+    color: #f87171;
+    font-weight: bold;
+}
+
+.pg-btn {
+    display: inline-block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 14px;
+    margin-top: 8px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    text-align: center;
+    text-decoration: none;
+    color: white;
+    background: #2563eb;
+}
+
+.pg-btn:hover {
+    opacity: 0.88;
+}
+
+.pg-btn.secondary {
+    background: #374151;
+}
+
+.pg-btn.danger {
+    background: #dc2626;
+}
+
+.pg-btn.selected {
+    border: 2px solid #60a5fa;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.25), 0 0 14px rgba(96, 165, 250, 0.55);
+}
+
+.pg-link-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.pg-link-row .pg-btn {
+    margin-top: 0;
+}
+
+.pg-empty {
+    color: #64748b;
+    text-align: center;
+    padding: 20px 0;
+}
+
+.pg-history-item {
+    border-bottom: 1px solid #1f2937;
+    padding: 10px 0;
+}
+
+.pg-history-item:last-child {
+    border-bottom: none;
+}
+
+.pg-history-item .pg-url {
+    font-weight: bold;
+    word-break: break-word;
+}
+
+.pg-history-item .pg-meta {
+    color: #94a3b8;
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.pg-toggle-options button {
+    width: auto;
 }

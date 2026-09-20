@@ -3,6 +3,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
+from urllib.parse import urlparse
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -17,7 +18,7 @@ from .ml_state import (
     DT_METRICS, MODEL_LABEL, RF_METRICS,
     global_shap_importance, model_info,
 )
-from .models import Detection, ReportedURL, ExtensionReport, User
+from .models import BlockedURL, Detection, ReportedURL, ExtensionReport, User
 from .schemas import (
     AdminCreateUser, AdminUserUpdate, DetectionWithUser, UserOut,
 )
@@ -416,6 +417,28 @@ def approve_extension_report(
         timezone.utc
     ).replace(tzinfo=None)
 
+    # "Save in Database": this is what actually makes the URL enforced as
+    # blocked going forward (see GET /api/extension/check-blacklist).
+    raw = report.url.strip()
+    if not raw.lower().startswith(("http://", "https://")):
+        raw = "http://" + raw
+    domain = (urlparse(raw).hostname or "").lower()
+
+    if domain:
+        existing = (
+            db.query(BlockedURL)
+            .filter(BlockedURL.domain == domain)
+            .first()
+        )
+        if not existing:
+            db.add(
+                BlockedURL(
+                    url=report.url,
+                    domain=domain,
+                    risk_level="High",
+                    reason=report.detection_reason,
+                )
+            )
 
     db.commit()
     db.refresh(report)

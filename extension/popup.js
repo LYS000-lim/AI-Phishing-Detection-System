@@ -1,199 +1,90 @@
-document.addEventListener(
-    "DOMContentLoaded",
-    () => {
-
-
-        chrome.storage.local.get(
-            [
-                "lastScan"
-            ],
-
-            (data)=>{
-
-
-                const result =
-                document.getElementById(
-                    "result"
-                );
-
-
-                if(!data.lastScan){
-
-                    result.innerHTML = `
-
-                    <p>
-                    No scan result available.
-                    </p>
-
-                    `;
-
-                    return;
-
-                }
-
-
-                const scan =
-                data.lastScan;
-
-
-
-                const isPhishing =
-                scan.prediction === "phishing";
-
-
-
-                result.innerHTML = `
-
-
-                <p>
-                <b>Website:</b>
-                <br>
-                ${scan.url}
-                </p>
-
-
-                <p>
-                <b>Status:</b>
-                <br>
-
-                <span class="
-                ${isPhishing ? 
-                "danger" : 
-                "safe"}
-                ">
-
-                ${
-                    isPhishing
-                    ?
-                    "⚠ PHISHING"
-                    :
-                    "✓ SAFE"
-                }
-
-                </span>
-
-                </p>
-
-
-                <p>
-                <b>Risk:</b>
-                ${scan.risk_level}
-                </p>
-
-
-
-                <p>
-                <b>Confidence:</b>
-
-                ${
-                    (scan.confidence*100)
-                    .toFixed(2)
-                }%
-
-                </p>
-
-
-
-                ${
-                isPhishing
-                ?
-
-                `
-
-                <p>
-                <b>Attack:</b>
-
-                ${
-                    scan.attack_type?.category
-                    ||
-                    "Unknown"
-                }
-
-                </p>
-
-
-                <button
-                id="report">
-                    Report URL
-                </button>
-
-                `
-
-                :
-
-                ""
-
-                }
-
-
-                `;
-
-
-
-                if(isPhishing){
-
-                    document
-                    .getElementById(
-                        "report"
-                    )
-                    .onclick =
-                    async()=>{
-
-
-                        await fetch(
-
-                        "http://localhost:8000/api/extension/report",
-
-                        {
-
-                        method:"POST",
-
-                        headers:{
-                        "Content-Type":
-                        "application/json"
-                        },
-
-
-                        body:
-                        JSON.stringify({
-
-                        url:scan.url,
-
-                        attack_type:
-                        scan.attack_type?.category
-                        ||
-                        "Unknown",
-
-
-                        detection_reason:
-                        "Reported from extension popup",
-
-
-                        browser_info:
-                        navigator.userAgent
-
-                        })
-
-                        }
-
-                        );
-
-
-                        alert(
-                        "URL reported"
-                        );
-
-
-                    };
-
-                }
-
-
-            }
-
-        );
-
-
+document.addEventListener("DOMContentLoaded", async () => {
+    const store = await chrome.storage.local.get([
+        "lastScan",
+        "historyConsentGiven",
+    ]);
+
+    document.getElementById("pg-consent-banner").style.display =
+        store.historyConsentGiven ? "none" : "block";
+
+    const result = document.getElementById("result");
+
+    if (!store.lastScan) {
+        result.innerHTML = `<p>No scan result available. Browse to a website to see PhishGuard's analysis.</p>`;
+        return;
     }
 
-);
+    const scan = store.lastScan;
+    const isPhishing = scan.prediction === "phishing";
+    const attack = scan.attack_type || {};
+    const reasons = attack.indicators || [];
+
+    result.innerHTML = `
+        <div class="pg-row">
+            <span class="pg-label">Website</span>
+            <span class="pg-value">${pgEscape(scan.url)}</span>
+        </div>
+        <div class="pg-row">
+            <span class="pg-label">Status</span>
+            <span class="pg-value">
+                <span class="pg-badge ${isPhishing ? "danger" : "safe"}">
+                    ${isPhishing ? "PHISHING" : "SAFE"}
+                </span>
+            </span>
+        </div>
+        <div class="pg-row">
+            <span class="pg-label">Risk Level</span>
+            <span class="pg-value">
+                <span class="pg-badge ${pgRiskBadgeClass(scan.risk_level)}">
+                    ${pgEscape(scan.risk_level)}
+                </span>
+            </span>
+        </div>
+        <div class="pg-row">
+            <span class="pg-label">Confidence</span>
+            <span class="pg-value">${pgPct(scan.confidence)}</span>
+        </div>
+        <div class="pg-row">
+            <span class="pg-label">Phishing Probability</span>
+            <span class="pg-value">${pgPct(scan.phishing_probability)}</span>
+        </div>
+        ${isPhishing ? `
+        <div class="pg-row">
+            <span class="pg-label">Attack Type</span>
+            <span class="pg-value">${pgEscape(attack.category || "Unknown")}</span>
+        </div>
+        ` : ""}
+        ${reasons.length ? `
+            <div style="margin-top:10px;"><b>Detection Reasons</b></div>
+            <ul class="pg-reasons">
+                ${reasons.map((r) => `<li>${pgEscape(r)}</li>`).join("")}
+            </ul>
+        ` : ""}
+        ${isPhishing ? `<div class="pg-recommendation">${pgEscape(pgRecommendation(attack.category))}</div>` : ""}
+        ${isPhishing ? `<button class="pg-btn danger" id="report" style="margin-top:12px;">Report URL</button>` : ""}
+    `;
+
+    if (isPhishing) {
+        document.getElementById("report").addEventListener("click", async (event) => {
+            const btn = event.currentTarget;
+            btn.disabled = true;
+            btn.textContent = "Reporting...";
+            try {
+                await fetch("http://localhost:8000/api/extension/report", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        url: scan.url,
+                        attack_type: attack.category || "Unknown",
+                        detection_reason: "Reported from extension popup",
+                        browser_info: navigator.userAgent,
+                    }),
+                });
+                btn.textContent = "Reported ✓";
+            } catch (error) {
+                btn.textContent = "Report failed";
+                btn.disabled = false;
+            }
+        });
+    }
+});

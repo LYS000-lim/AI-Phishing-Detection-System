@@ -174,7 +174,7 @@ export default function AdminBlacklist() {
                       className="link-btn"
                       onClick={()=>approveReport(r.id)}
                     >
-                      Approve
+                      Save in Database
                     </button>
 
 
@@ -182,7 +182,7 @@ export default function AdminBlacklist() {
                       className="link-btn"
                       onClick={()=>rejectReport(r.id)}
                     >
-                      Reject
+                      Do Not Save in Database
                     </button>
                   </>
                 }

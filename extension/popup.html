@@ -1,47 +1,32 @@
 <!DOCTYPE html>
-
 <html>
-
 <head>
-
-    <title>
-        PhishGuard AI
-    </title>
-
-
-    <link
-        rel="stylesheet"
-        href="style.css"
-    >
-
+    <meta charset="utf-8">
+    <title>PhishGuard AI</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body { width: 380px; }
+    </style>
 </head>
-
-
 <body>
 
+<div class="pg-page" style="padding: 16px;">
+    <h1>&#128737; PhishGuard AI</h1>
 
-<div class="popup-container">
-
-
-    <h1>
-        🛡 PhishGuard AI
-    </h1>
-
-
-    <div id="result">
-
-        Checking...
-
+    <div id="pg-consent-banner" class="pg-section" style="display:none;">
+        <p style="margin:0 0 10px;">Save a local history of the sites PhishGuard checks?</p>
+        <a class="pg-btn" href="options.html" target="_blank">Choose Now</a>
     </div>
 
+    <div id="result">Checking...</div>
 
+    <div class="pg-link-row">
+        <a class="pg-btn secondary" href="history.html" target="_blank">History</a>
+        <a class="pg-btn secondary" href="options.html" target="_blank">Settings</a>
+    </div>
 </div>
 
-
+<script src="common.js"></script>
 <script src="popup.js"></script>
-
-
 </body>
-
-
 </html>
