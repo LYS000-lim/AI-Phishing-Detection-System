@@ -23,6 +23,8 @@ class User(Base):
     role = Column(String(16), nullable=False, default="user")   # "user" | "admin"
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=_utc_now)
+    last_login_at = Column(DateTime, nullable=True)
+    last_logout_at = Column(DateTime, nullable=True)
 
     detections = relationship(
         "Detection",
@@ -54,7 +56,9 @@ class Detection(Base):
     phishing_probability = Column(Float, nullable=False)
     risk_level = Column(String(8), nullable=False)    # "Low" | "Medium" | "High"
     model_used = Column(String(64), nullable=False)   # e.g. "RandomForest"
+    attack_type = Column(String(64), nullable=True)   # e.g. "Credential Theft"; null for legitimate
     ip_address = Column(String(64), nullable=True)
+    source = Column(String(16), nullable=False, default="website")  # "website" | "extension"
     created_at = Column(
         DateTime, nullable=False, default=_utc_now, index=True,
     )
@@ -156,6 +160,20 @@ class ExtensionReport(Base):
         DateTime,
         nullable=True,
     )
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=_utc_now)
 
 
 class BlockedURL(Base):

@@ -12,6 +12,30 @@
     <p class="pg-subtitle">Manage how PhishGuard protects this browser.</p>
 
     <div class="pg-section">
+        <h2>Website Account</h2>
+        <p>
+            Sign in with your PhishGuard AI website account to sync
+            extension detections to your account, viewable on the
+            website's Browser Extension page.
+        </p>
+
+        <div id="pg-signed-out">
+            <input type="email" id="pg-login-email" class="pg-input" placeholder="Email">
+            <input type="password" id="pg-login-password" class="pg-input" placeholder="Password">
+            <button class="pg-btn" id="pg-sign-in">Sign In</button>
+            <div id="pg-login-error" class="pg-error" style="display:none;"></div>
+        </div>
+
+        <div id="pg-signed-in" style="display:none;">
+            <div class="pg-row">
+                <span class="pg-label">Signed in as</span>
+                <span class="pg-value" id="pg-account-email"></span>
+            </div>
+            <button class="pg-btn secondary" id="pg-sign-out">Sign Out</button>
+        </div>
+    </div>
+
+    <div class="pg-section">
         <h2>Detection History</h2>
         <p>
             Allow PhishGuard AI to save a local history of the websites it

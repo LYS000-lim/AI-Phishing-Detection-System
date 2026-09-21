@@ -4,6 +4,10 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 
+# Secrets
+.env
+backend/.env
+
 # Node
 node_modules/
 

@@ -5,12 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from .allowlist import is_trusted, matched_domain
+from .auth import try_current_user
 from .database import get_db
 from .features import extract_features, feature_vector
 from .explanations import risk_level
 from .ml_state import MODEL, model_info
 from .phishing_type import detect_phishing_type
-from .models import BlockedURL, ExtensionReport
+from .models import BlockedURL, Detection, ExtensionReport, User
 from .schemas import ExtensionReportCreate, ExtensionReportOut
 
 
@@ -27,13 +28,19 @@ router = APIRouter(
 @router.post("/scan")
 def extension_scan(
     payload: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: Optional[User] = Depends(try_current_user),
 ):
     """
-    Anonymous Chrome Extension scan.
+    Chrome Extension scan - anonymous by default.
 
-    Important:
-    - Does NOT save into Detection table.
-    - Only performs real-time prediction.
+    If the extension has a signed-in website account (Authorization: Bearer
+    <token> from the Settings page sign-in), the scan is ALSO logged to the
+    same Detection table website scans use (tagged source="extension"), so
+    it shows up in that user's Browser Extension Detection History. Without
+    a valid token, behaviour is identical to before: real-time prediction
+    only, nothing saved.
     """
 
     url = payload.get("url")
@@ -44,9 +51,18 @@ def extension_scan(
             detail="URL is required",
         )
 
+    ip = request.client.host if request.client else None
+
     # Reputation-list bypass: well-known trusted domains skip ML
     # classification entirely, matching routes_user.py's _predict_and_log.
     if is_trusted(url):
+        if user is not None:
+            db.add(Detection(
+                user_id=user.id, url=url, prediction="legitimate", label=0,
+                confidence=1.0, phishing_probability=0.0, risk_level="Low",
+                model_used="TrustedAllowlist", ip_address=ip, source="extension",
+            ))
+            db.commit()
         return {
             "url": url,
             "prediction": "legitimate",
@@ -97,6 +113,17 @@ def extension_scan(
                 features,
             )
 
+        if user is not None:
+            db.add(Detection(
+                user_id=user.id, url=url, prediction=prediction, label=label,
+                confidence=round(confidence, 4),
+                phishing_probability=round(phishing_probability, 4),
+                risk_level=risk, model_used=model_info()["name"],
+                attack_type=attack_type["category"] if attack_type else None,
+                ip_address=ip, source="extension",
+            ))
+            db.commit()
+
         return {
             "url": url,
             "prediction": prediction,
@@ -116,6 +143,8 @@ def extension_scan(
         }
 
 
+    except HTTPException:
+        raise
     except Exception as exc:
 
         raise HTTPException(

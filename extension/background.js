@@ -202,9 +202,15 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
     // 3. ML analysis (and trusted-domain bypass, handled server-side)
     try {
+        const headers = { "Content-Type": "application/json" };
+        const auth = await chrome.storage.session.get("pgAuthToken");
+        if (auth.pgAuthToken) {
+            headers.Authorization = `Bearer ${auth.pgAuthToken}`;
+        }
+
         const response = await fetch(SCAN_URL, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers,
             body: JSON.stringify({ url }),
         });
 

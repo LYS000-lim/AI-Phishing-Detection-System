@@ -3,6 +3,7 @@ import {
   adminCreateUser, adminDeleteUser, adminUpdateUser, adminUsers,
 } from '../../api.js'
 import { useAuth } from '../../AuthContext.jsx'
+import PasswordRequirements, { isPasswordValid } from '../PasswordRequirements.jsx'
 
 const EMPTY_NEW_USER = {
   full_name: '', email: '', password: '', confirm: '', role: 'user',
@@ -40,6 +41,10 @@ export default function AdminUserManagement() {
   const saveCreate = async (e) => {
     e.preventDefault()
     setCreateError('')
+    if (!isPasswordValid(newUser.password)) {
+      setCreateError('Password does not meet the requirements below')
+      return
+    }
     if (newUser.password !== newUser.confirm) {
       setCreateError('Passwords do not match')
       return
@@ -206,15 +211,16 @@ export default function AdminUserManagement() {
                 required
               />
 
-              <label className="auth-label">Password (min. 6 chars)</label>
+              <label className="auth-label">Password</label>
               <input
                 className="scan-input"
                 type="password"
                 value={newUser.password}
                 onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                minLength={6}
+                minLength={8}
                 required
               />
+              <PasswordRequirements password={newUser.password} />
 
               <label className="auth-label">Confirm password</label>
               <input

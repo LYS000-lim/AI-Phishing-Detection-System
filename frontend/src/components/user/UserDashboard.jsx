@@ -1,21 +1,24 @@
 import { useEffect, useState } from 'react'
-import {
-  Chart as ChartJS, ArcElement, BarElement, CategoryScale,
-  LinearScale, Tooltip, Legend,
-} from 'chart.js'
-import { Bar, Doughnut } from 'react-chartjs-2'
 import { Link } from 'react-router-dom'
-import { personalSummary } from '../../api.js'
+import { detectionsDashboardVisuals, personalSummary } from '../../api.js'
 import { useAuth } from '../../AuthContext.jsx'
+import DashboardVisuals from '../DashboardVisuals.jsx'
 
-ChartJS.register(ArcElement, BarElement, CategoryScale, LinearScale, Tooltip, Legend)
+// Simple client-side label from the user's own phishing ratio — no backend
+// change needed, purely descriptive of scans run so far.
+const protectionLevel = (total, phishing) => {
+  if (total === 0) return { label: 'N/A', color: '#8ca3c3' }
+  const ratio = phishing / total
+  if (ratio < 0.1) return { label: 'Good', color: '#10b981' }
+  if (ratio < 0.3) return { label: 'Fair', color: '#f59e0b' }
+  return { label: 'Needs Attention', color: '#ef4444' }
+}
 
-const distLabels = {
-  long_url: 'Long URLs',
-  https: 'HTTPS URLs',
-  ip_domain: 'IP-address URLs',
-  suspicious_keywords: 'Suspicious keywords',
-  many_subdomains: 'Many subdomains',
+const todayISO = () => new Date().toISOString().slice(0, 10)
+const daysAgoISO = (n) => {
+  const d = new Date()
+  d.setDate(d.getDate() - n)
+  return d.toISOString().slice(0, 10)
 }
 
 export default function UserDashboard() {
@@ -23,40 +26,39 @@ export default function UserDashboard() {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
 
+  const [visuals, setVisuals] = useState(null)
+  const [dateFrom, setDateFrom] = useState(daysAgoISO(14))
+  const [dateTo, setDateTo] = useState(todayISO())
+  const [source, setSource] = useState('')
+  const [loading, setLoading] = useState(false)
+
   useEffect(() => {
     personalSummary().then(setData).catch((e) => setError(e.message))
   }, [])
 
+  useEffect(() => {
+    setLoading(true)
+    detectionsDashboardVisuals(14, source, dateFrom, dateTo)
+      .then(setVisuals)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [dateFrom, dateTo, source])
+
   if (error) return <div className="error-box">{error}</div>
   if (!data) return <p className="empty">Loading your dashboard…</p>
 
-  const { totals, feature_distribution: dist, recent } = data
+  const { totals, recent, phishing_this_month = 0 } = data
+  const protection = protectionLevel(totals.total, totals.phishing)
 
-  const distData = {
-    labels: Object.keys(dist).map((k) => distLabels[k] || k),
-    datasets: [{
-      data: Object.values(dist),
-      backgroundColor: '#38bdf8',
-      borderRadius: 4,
-    }],
-  }
-  const distOpts = {
-    indexAxis: 'y', responsive: true,
-    plugins: { legend: { display: false } },
-    scales: {
-      x: { ticks: { color: '#8ca3c3' }, grid: { color: '#223350' } },
-      y: { ticks: { color: '#e6eef9' }, grid: { display: false } },
-    },
-  }
-
-  const pieData = {
-    labels: ['Phishing', 'Legitimate'],
-    datasets: [{
-      data: [totals.phishing, totals.legitimate],
-      backgroundColor: ['#ef4444', '#10b981'],
-      borderWidth: 0,
-    }],
-  }
+  const advice = phishing_this_month > 0
+    ? {
+      headline: `Your account detected ${phishing_this_month} phishing attempt${phishing_this_month === 1 ? '' : 's'} this month.`,
+      tip: 'Avoid entering credentials on unknown or unexpected websites, and double-check the domain before signing in - even if the page looks familiar.',
+    }
+    : {
+      headline: 'No phishing attempts detected on your account this month.',
+      tip: 'Keep scanning links you\'re unsure about before opening them, and never enter your password on a page you reached from an email or message.',
+    }
 
   return (
     <>
@@ -66,41 +68,35 @@ export default function UserDashboard() {
       </div>
 
       <section className="panel">
-        <h3>System Summary</h3>
+        <h3>Security Overview</h3>
         <div className="tiles">
           <div className="tile">
             <div className="v">{totals.total}</div>
-            <div className="k">Total scans</div>
+            <div className="k">Total URLs Checked</div>
           </div>
           <div className="tile">
             <div className="v" style={{ color: '#ef4444' }}>{totals.phishing}</div>
-            <div className="k">Phishing detected</div>
+            <div className="k">Threats Detected</div>
           </div>
           <div className="tile">
             <div className="v" style={{ color: '#10b981' }}>{totals.legitimate}</div>
-            <div className="k">Legitimate</div>
+            <div className="k">Safe Websites</div>
+          </div>
+          <div className="tile">
+            <div className="v" style={{ color: protection.color }}>{protection.label}</div>
+            <div className="k">Protection Status</div>
           </div>
         </div>
       </section>
 
-      <div className="split-2">
-        <section className="panel">
-          <h3>Verdict split</h3>
-          {totals.total > 0
-            ? <Doughnut data={pieData} options={{ plugins: { legend: { position: 'bottom' } } }} />
-            : <p className="empty">Run your first scan to populate this chart.</p>}
-        </section>
-
-        <section className="panel">
-          <h3>Feature distribution across your scans</h3>
-          {totals.total > 0
-            ? <Bar data={distData} options={distOpts} />
-            : <p className="empty">No scans yet.</p>}
-        </section>
-      </div>
+      <section className="panel">
+        <h3>Security Advice</h3>
+        <p style={{ margin: '0 0 6px', fontWeight: 600 }}>{advice.headline}</p>
+        <p className="xai-note" style={{ margin: 0 }}>{advice.tip}</p>
+      </section>
 
       <section className="panel">
-        <h3>Recent scans</h3>
+        <h3>Recent Detection Logs</h3>
         {recent.length === 0 ? (
           <p className="empty">
             No scans yet. Head to <Link to="/scanner">Analyse URL</Link> to run one.
@@ -108,13 +104,7 @@ export default function UserDashboard() {
         ) : (
           <table className="hist">
             <thead>
-              <tr>
-                <th>Time</th>
-                <th>URL</th>
-                <th>Verdict</th>
-                <th>Risk</th>
-                <th>Confidence</th>
-              </tr>
+              <tr><th>Time</th><th>URL</th><th>Verdict</th><th>Risk</th></tr>
             </thead>
             <tbody>
               {recent.map((r) => (
@@ -131,13 +121,23 @@ export default function UserDashboard() {
                       {r.risk_level}
                     </span>
                   </td>
-                  <td>{(r.confidence * 100).toFixed(1)}%</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </section>
+
+      <DashboardVisuals
+        visuals={visuals}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        source={source}
+        onDateFromChange={setDateFrom}
+        onDateToChange={setDateTo}
+        onSourceChange={setSource}
+        loading={loading}
+      />
     </>
   )
 }

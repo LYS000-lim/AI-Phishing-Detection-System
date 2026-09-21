@@ -56,7 +56,10 @@ export default function Login() {
           autoFocus={!prefillEmail}
         />
 
-        <label className="auth-label" htmlFor="password">Password</label>
+        <div className="auth-label-row">
+          <label className="auth-label" htmlFor="password">Password</label>
+          <Link to="/forgot-password" className="auth-inline-link">Forgot password?</Link>
+        </div>
         <input
           id="password"
           type="password"

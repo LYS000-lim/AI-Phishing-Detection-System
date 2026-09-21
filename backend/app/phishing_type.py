@@ -184,6 +184,14 @@ def _present_keywords(url_lower: str, candidates: tuple[str, ...]) -> list[str]:
     return [word for word in candidates if word in url_lower]
 
 
+def detect_brand(url: str) -> "str | None":
+    """Lightweight brand-impersonation lookup for aggregate reporting
+    (e.g. admin 'most targeted brand' stat). Unlike detect_phishing_type,
+    this needs only the URL - no feature extraction."""
+    brand = _brand_analysis(_host(url))
+    return brand.get("brand")
+
+
 def detect_phishing_type(url: str, features: dict) -> dict:
     """
     Produce human-readable phishing attack analysis for the UI.

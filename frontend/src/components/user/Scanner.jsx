@@ -87,6 +87,23 @@ const formatDetectedValue = (feature, value) => {
   return displayValue(value)
 }
 
+// Mirrors the mapping in extension/common.js (pgRecommendation) — keep in sync.
+const RECOMMENDATIONS = {
+  'Credential Theft': 'Do not enter your username or password on this site.',
+  'Financial Scam': 'Do not enter any payment or banking information.',
+  'Fake Giveaway / Scam': 'Do not provide personal information or make any payment.',
+  'Tech Support / Malware Scam': 'Do not download or install anything from this site, and do not call any phone number shown.',
+  'Domain Spoofing / Brand Impersonation': "Verify you are on the brand's official domain before entering any information.",
+}
+const recommendationFor = (category) =>
+  RECOMMENDATIONS[category] || 'Avoid entering any personal or account information on this website.'
+
+const DEMO_EXAMPLES = [
+  { url: 'https://www.google.com', safe: true },
+  { url: 'http://paypal-login-security.test', safe: false },
+  { url: 'http://amazon-account-verification.test', safe: false },
+]
+
 const splitReason = (reason) => {
   const text = String(reason || '')
   const separator = ' — '
@@ -102,7 +119,7 @@ const splitReason = (reason) => {
   }
 }
 
-export default function Scanner() {
+export default function Scanner({ scanFn = scanURL }) {
   const [url, setUrl] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
@@ -111,8 +128,8 @@ export default function Scanner() {
   const [reported, setReported] = useState(false)
   const [reporting, setReporting] = useState(false)
 
-  const run = async () => {
-    const target = url.trim()
+  const run = async (overrideUrl) => {
+    const target = (overrideUrl ?? url).trim()
     if (!target) return
 
     setBusy(true)
@@ -122,7 +139,7 @@ export default function Scanner() {
     setReported(false)
 
     try {
-      const pred = await scanURL(target)
+      const pred = await scanFn(target)
       setResult(pred)
 
       const exp = await explainURL(target)
@@ -176,7 +193,7 @@ export default function Scanner() {
       <div className="page-header">
         <h2>Analyse a URL</h2>
         <p className="tagline">
-          Paste any URL to check whether it is phishing or legitimate.
+          Enter a website URL to analyse. Example: https://example.com
         </p>
       </div>
 
@@ -185,17 +202,32 @@ export default function Scanner() {
         <div className="scan-row">
           <input
             className="scan-input"
-            placeholder="https://example.com/login"
+            placeholder="google.com or https://example.com"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && !busy && run()}
             aria-label="URL to scan"
           />
-          <button className="scan-btn" onClick={run} disabled={busy}>
+          <button className="scan-btn" onClick={() => run()} disabled={busy}>
             {busy ? 'Scanning…' : 'Scan URL'}
           </button>
         </div>
         {error && <div className="error-box">{error}</div>}
+
+        <div className="demo-examples">
+          <span className="demo-label">Try examples:</span>
+          {DEMO_EXAMPLES.map((example) => (
+            <button
+              key={example.url}
+              type="button"
+              className={`demo-chip ${example.safe ? 'safe' : 'danger'}`}
+              disabled={busy}
+              onClick={() => { setUrl(example.url); run(example.url) }}
+            >
+              {example.safe ? '✓' : '⚠'} {example.url}
+            </button>
+          ))}
+        </div>
       </section>
 
       {result && (
@@ -262,19 +294,29 @@ export default function Scanner() {
           )}
 
           {isPhish && (
-            <div className="result-actions">
-              <button
-                className="report-btn"
-                onClick={handleReport}
-                disabled={reporting || reported}
-              >
-                {reported
-                  ? 'URL Reported'
-                  : reporting
-                    ? 'Reporting…'
-                    : 'Report URL'}
-              </button>
-            </div>
+            <>
+              <div className="security-recommendation">
+                <span className="rec-icon" aria-hidden>⚠</span>
+                <div>
+                  <div className="rec-label">Security Recommendation</div>
+                  <div>{recommendationFor(attack?.category)}</div>
+                </div>
+              </div>
+
+              <div className="result-actions">
+                <button
+                  className="report-btn"
+                  onClick={handleReport}
+                  disabled={reporting || reported}
+                >
+                  {reported
+                    ? 'URL Reported'
+                    : reporting
+                      ? 'Reporting…'
+                      : 'Report URL'}
+                </button>
+              </div>
+            </>
           )}
         </section>
       )}

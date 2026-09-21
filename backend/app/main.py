@@ -1,3 +1,13 @@
+import os
+
+from dotenv import load_dotenv
+
+# Load backend/.env (SMTP credentials, secrets, etc.) before anything else
+# reads os.environ. Path is relative to this file, not the process's cwd,
+# since uvicorn is launched with --app-dir backend from the repo root.
+# Safe to call even if the file doesn't exist.
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -18,13 +28,20 @@ app = FastAPI(
     version="2.2.0",
 )
 
-# CORS - open in development, tighten for production.
+# CORS - restricted to the known frontend origin(s). Override/extend via
+# the PHISHGUARD_CORS_ORIGINS env var (comma-separated) when deploying.
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+_allowed_origins = [
+    o.strip()
+    for o in os.environ.get("PHISHGUARD_CORS_ORIGINS", _default_origins).split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 # Ensure SQLite tables exist on boot.

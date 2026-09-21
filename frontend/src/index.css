@@ -47,6 +47,13 @@ body {
 }
 .auth-submit { width: 100%; margin-top: 16px; }
 .auth-switch { text-align: center; color: var(--muted); margin: 16px 0 0; }
+.auth-label-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin: 12px 0 6px;
+}
+.auth-label-row .auth-label { margin: 0; }
+.auth-inline-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+.auth-inline-link:hover { text-decoration: underline; }
 .auth-switch a { color: var(--accent); text-decoration: none; }
 .auth-switch a:hover { text-decoration: underline; }
 .logout-actions {
@@ -67,6 +74,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 .sidebar .brand { font-size: 20px; font-weight: 700; }
 .role-badge {
@@ -94,6 +105,27 @@ body {
   color: var(--accent);
 }
 .side-foot { margin-top: auto; }
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.avatar-circle {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #041627;
+  font-weight: 800;
+  font-size: 22px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.profile-card-info { flex: 1; min-width: 200px; }
+.profile-card-meta { text-align: right; }
+
 .user-chip { padding: 10px 12px; border-top: 1px solid var(--border); }
 .user-name { font-weight: 600; }
 .user-email { color: var(--muted); font-size: 12px; }
@@ -115,6 +147,14 @@ body {
   margin-bottom: 20px;
 }
 .panel h3 { margin: 0 0 14px; font-size: 15px; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
+
+/* De-emphasized variant for static/informational panels sitting next to
+   data-heavy ones (e.g. install instructions above a detection-history
+   table) - smaller heading and body text, tighter padding. */
+.panel-compact { padding: 12px 16px; }
+.panel-compact h3 { font-size: 12px; margin-bottom: 8px; }
+.panel-compact p, .panel-compact li { font-size: 13px; line-height: 1.5; }
+.panel-compact .reason-list, .panel-compact .install-steps { gap: 4px; }
 .panel-head {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
@@ -152,6 +192,11 @@ body {
 }
 .scan-btn:disabled { opacity: .6; cursor: not-allowed; }
 .scan-btn.small { padding: 6px 12px; font-size: 13px; }
+.scan-btn.secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid #223350;
+}
 
 .link-btn {
   background: transparent;
@@ -305,6 +350,23 @@ body {
 .details { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; margin: 12px 0 20px; }
 .details dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 .details dd { margin: 0; word-break: break-all; }
+
+/* ------------ Password requirements checklist ------------ */
+.password-rules {
+  list-style: none;
+  margin: -6px 0 14px;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+}
+.password-rules li { color: var(--bad); }
+.password-rules li.ok { color: var(--good); }
+.password-rules li span { display: inline-block; width: 14px; }
+
+.password-match { margin: 6px 0 14px; font-size: 12px; }
+.password-match.ok { color: var(--good); }
+.password-match.bad { color: var(--bad); }
 
 /* ------------ Misc ------------ */
 .empty { color: var(--muted); padding: 6px 2px; }
@@ -639,6 +701,15 @@ body {
 .reason-list li::marker { color: var(--bad); }
 .legitimate-reasons li::marker { color: var(--good); }
 
+.install-steps {
+  margin: 0;
+  padding-left: 21px;
+  display: grid;
+  gap: 9px;
+}
+.install-steps li { line-height: 1.6; padding-left: 3px; }
+.install-steps li::marker { color: var(--accent); }
+
 .evidence-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -729,3 +800,101 @@ body {
 .reason-list li > span {
   color: var(--text);
 }
+
+/* ------------ Step 3: demo examples (Scanner) ------------ */
+.demo-examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.demo-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-right: 4px;
+}
+
+.demo-chip {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.demo-chip:hover:not(:disabled) { border-color: var(--accent); }
+.demo-chip:disabled { opacity: .55; cursor: not-allowed; }
+.demo-chip.safe { color: var(--good); }
+.demo-chip.danger { color: var(--bad); }
+
+/* ------------ Step 3: security recommendation (Scanner) ------------ */
+.security-recommendation {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: rgba(245, 158, 11, .1);
+  border: 1px solid rgba(245, 158, 11, .35);
+  border-radius: 10px;
+  color: #fde68a;
+}
+
+.rec-icon { font-size: 16px; line-height: 1.4; }
+.rec-label {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: .04em;
+  margin-bottom: 2px;
+  color: var(--warn);
+}
+
+/* ------------ Step 3: pagination + date-range filters (reused across
+   Admin Detection Logs, Admin Blacklist, User History) ------------ */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.date-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.date-filter input[type="date"] {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-family: inherit;
+}
+
+/* ------------ Step 3: static extension info card (Profile) ------------ */
+.extension-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.extension-card .icon { font-size: 22px; }

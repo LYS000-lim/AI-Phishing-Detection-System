@@ -1,8 +1,10 @@
+from collections import Counter
+from datetime import date, datetime, time, timedelta, timezone
 from typing import List, Optional
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import desc, func
+from sqlalchemy import Integer, desc, func
 from sqlalchemy.orm import Session
 
 from .auth import current_user, hash_password, verify_password
@@ -33,6 +35,7 @@ def _predict_and_log(
     user: User,
     db: Session,
     ip: Optional[str] = None,
+    source: str = "website",
 ) -> dict:
     # Reputation-list bypass: well-known trusted domains skip ML
     # classification entirely. This is a separate result state from an ML
@@ -50,6 +53,7 @@ def _predict_and_log(
             risk_level="Low",
             model_used="TrustedAllowlist",
             ip_address=ip,
+            source=source,
         )
         db.add(record)
         db.commit()
@@ -104,7 +108,9 @@ def _predict_and_log(
         phishing_probability=round(p_phish, 4),
         risk_level=risk,
         model_used=model_info()["name"],
+        attack_type=attack_type["category"] if attack_type else None,
         ip_address=ip,
+        source=source,
     )
     db.add(record)
     db.commit()
@@ -306,17 +312,269 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
 # ---------------------------------------------------------------------------
 # Personal history + dashboard
 # ---------------------------------------------------------------------------
-@router.get("/api/detections", response_model=List[DetectionOut])
+def _date_range_bounds(date_from: Optional[str], date_to: Optional[str]):
+    """Parse YYYY-MM-DD query params into inclusive-day datetime bounds."""
+    start = end = None
+    if date_from:
+        try:
+            start = datetime.combine(date.fromisoformat(date_from), time.min)
+        except ValueError:
+            raise HTTPException(400, "Invalid date_from (expected YYYY-MM-DD)")
+    if date_to:
+        try:
+            end = datetime.combine(date.fromisoformat(date_to), time.max)
+        except ValueError:
+            raise HTTPException(400, "Invalid date_to (expected YYYY-MM-DD)")
+    return start, end
+
+
+@router.get("/api/detections")
 def my_detections(
-    limit: int = 100,
+    page: int = 1,
+    page_size: int = 20,
     q: Optional[str] = None,
+    result: Optional[str] = None,          # "phishing" | "legitimate"
+    risk: Optional[str] = None,            # "Low" | "Medium" | "High"
+    attack_type: Optional[str] = None,
+    date_from: Optional[str] = None,       # "YYYY-MM-DD"
+    date_to: Optional[str] = None,
+    source: Optional[str] = None,          # "website" | "extension"
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
     query = db.query(Detection).filter(Detection.user_id == user.id)
     if q:
         query = query.filter(Detection.url.ilike(f"%{q}%"))
-    return query.order_by(desc(Detection.created_at)).limit(limit).all()
+    if result in ("phishing", "legitimate"):
+        query = query.filter(Detection.prediction == result)
+    if risk in ("Low", "Medium", "High"):
+        query = query.filter(Detection.risk_level == risk)
+    if attack_type:
+        query = query.filter(Detection.attack_type == attack_type)
+    if source in ("website", "extension"):
+        query = query.filter(Detection.source == source)
+
+    start, end = _date_range_bounds(date_from, date_to)
+    if start:
+        query = query.filter(Detection.created_at >= start)
+    if end:
+        query = query.filter(Detection.created_at <= end)
+
+    total = query.count()
+    rows = (
+        query.order_by(desc(Detection.created_at))
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    return {
+        "items": [DetectionOut.model_validate(r).model_dump(mode="json") for r in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
+
+
+@router.get("/api/detections/history-summary")
+def detections_history_summary(
+    source: Optional[str] = None,          # "website" | "extension"
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """
+    Feeds the Browser Extension Detection History section: stat cards,
+    a 7-day trend, and attack-category / risk-level breakdowns, optionally
+    scoped to one source so the page can filter All / Website / Extension.
+    """
+    q = db.query(Detection).filter(Detection.user_id == user.id)
+    if source in ("website", "extension"):
+        q = q.filter(Detection.source == source)
+
+    total = q.count()
+    phishing = q.filter(Detection.label == 1).count()
+    legitimate = total - phishing
+    high_risk = q.filter(Detection.risk_level == "High").count()
+
+    since7 = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
+    trend_query = (
+        db.query(
+            func.date(Detection.created_at).label("day"),
+            func.sum((Detection.label == 1).cast(Integer)).label("phishing"),
+            func.sum((Detection.label == 0).cast(Integer)).label("legitimate"),
+        )
+        .filter(Detection.user_id == user.id, Detection.created_at >= since7)
+    )
+    if source in ("website", "extension"):
+        trend_query = trend_query.filter(Detection.source == source)
+    trend_rows = trend_query.group_by("day").order_by("day").all()
+    trend_7d = [
+        {"day": r.day, "phishing": int(r.phishing or 0),
+         "legitimate": int(r.legitimate or 0)}
+        for r in trend_rows
+    ]
+
+    attack_query = (
+        db.query(Detection.attack_type, func.count(Detection.id).label("n"))
+        .filter(Detection.user_id == user.id, Detection.attack_type.isnot(None))
+    )
+    if source in ("website", "extension"):
+        attack_query = attack_query.filter(Detection.source == source)
+    attack_rows = attack_query.group_by(Detection.attack_type).order_by(desc("n")).all()
+    attack_category_frequency = [
+        {"category": r[0], "count": int(r[1])} for r in attack_rows
+    ]
+
+    risk_query = (
+        db.query(Detection.risk_level, func.count(Detection.id).label("n"))
+        .filter(Detection.user_id == user.id)
+    )
+    if source in ("website", "extension"):
+        risk_query = risk_query.filter(Detection.source == source)
+    risk_counts = {r[0]: int(r[1]) for r in risk_query.group_by(Detection.risk_level).all()}
+
+    return {
+        "totals": {
+            "total": total, "phishing": phishing,
+            "legitimate": legitimate, "high_risk": high_risk,
+        },
+        "trend_7d": trend_7d,
+        "attack_category_frequency": attack_category_frequency,
+        "risk_distribution": {
+            "Low": risk_counts.get("Low", 0),
+            "Medium": risk_counts.get("Medium", 0),
+            "High": risk_counts.get("High", 0),
+        },
+    }
+
+
+_SOURCE_DISPLAY = [
+    ("website", "Website Scanner"),
+    ("extension", "Chrome Extension"),
+]
+
+
+def _resolve_window(days: int, date_from: Optional[str], date_to: Optional[str]):
+    """Shared by the admin and user dashboard-visuals endpoints: resolves the
+    (since, until) datetime window from either an explicit start/end date
+    range or a day-count fallback."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if date_from and date_to:
+        try:
+            since = datetime.strptime(date_from, "%Y-%m-%d")
+            until = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+            return since, until
+        except ValueError:
+            pass
+    days = max(1, min(days, 90))
+    return now - timedelta(days=days), now
+
+
+def _feature_distribution(urls: List[str]) -> dict:
+    """Shared with the admin dashboard's 'Important URL Characteristics'
+    chart - counts how many of the given URLs exhibit each characteristic."""
+    dist = {
+        "long_url": 0, "https": 0, "ip_domain": 0,
+        "suspicious_keywords": 0, "many_subdomains": 0,
+    }
+    suspicious_words = ("login", "verify", "secure", "account", "update",
+                         "bank", "confirm", "signin", "password", "billing")
+    for url in urls:
+        f = extract_features(url)
+        if f["URLLength"] > 75:
+            dist["long_url"] += 1
+        if f["IsHTTPS"] == 1:
+            dist["https"] += 1
+        if f["IsDomainIP"] == 1:
+            dist["ip_domain"] += 1
+        if any(w in url.lower() for w in suspicious_words):
+            dist["suspicious_keywords"] += 1
+        if f["NoOfSubDomain"] >= 3:
+            dist["many_subdomains"] += 1
+    return dist
+
+
+def _source_distribution(sources: List[str]) -> list:
+    """Shared with the admin dashboard's 'Detection Source Distribution'
+    chart - percentage breakdown of where a set of detections came from."""
+    total = len(sources)
+    counts = Counter(sources)
+    return [
+        {
+            "source": label,
+            "count": counts.get(key, 0),
+            "percentage": round(counts.get(key, 0) / total * 100, 1) if total else 0.0,
+        }
+        for key, label in _SOURCE_DISPLAY
+    ]
+
+
+@router.get("/api/detections/dashboard-visuals")
+def detections_dashboard_visuals(
+    days: int = 14,
+    date_from: Optional[str] = None,       # "YYYY-MM-DD", overrides `days` with `date_to`
+    date_to: Optional[str] = None,         # "YYYY-MM-DD"
+    source: Optional[str] = None,          # "website" | "extension"
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """
+    Feeds the interactive chart section of the User Dashboard (Threat Trend,
+    Detection Result Overview, Important URL Characteristics, Attack Category
+    Analysis, Detection Source Distribution) - same shape as the admin
+    dashboard's 'visuals' block, scoped to this user and filterable by time
+    window / source. Kept separate from /detections/summary (lifetime KPI
+    cards) and /detections/history-summary (Browser Extension History page)
+    so neither of those is affected by this filtering.
+    """
+    since, until = _resolve_window(days, date_from, date_to)
+
+    q = db.query(Detection).filter(
+        Detection.user_id == user.id,
+        Detection.created_at >= since, Detection.created_at < until,
+    )
+    if source in ("website", "extension"):
+        q = q.filter(Detection.source == source)
+    rows = q.all()
+
+    phishing = sum(1 for r in rows if r.label == 1)
+    legitimate = len(rows) - phishing
+
+    trend_map = {}
+    for r in rows:
+        day = r.created_at.date().isoformat()
+        bucket = trend_map.setdefault(day, {"phishing": 0, "legitimate": 0})
+        bucket["phishing" if r.label == 1 else "legitimate"] += 1
+    trend = [
+        {"day": day, **counts} for day, counts in sorted(trend_map.items())
+    ]
+
+    attack_counts = Counter(r.attack_type for r in rows if r.attack_type)
+    attack_category_frequency = [
+        {"category": category, "count": count}
+        for category, count in attack_counts.most_common()
+    ]
+
+    # Source distribution ignores the `source` filter itself (that's the
+    # whole point of this chart), but still respects the time window.
+    since_rows = (
+        db.query(Detection.source)
+        .filter(
+            Detection.user_id == user.id,
+            Detection.created_at >= since, Detection.created_at < until,
+        )
+        .all()
+    )
+
+    return {
+        "date_from": since.date().isoformat(),
+        "date_to": (until - timedelta(days=1)).date().isoformat(),
+        "trend": trend,
+        "result_counts": {"phishing": phishing, "legitimate": legitimate},
+        "feature_distribution": _feature_distribution([r.url for r in rows]),
+        "attack_category_frequency": attack_category_frequency,
+        "source_distribution": _source_distribution([s for (s,) in since_rows]),
+    }
 
 
 @router.get("/api/detections/summary")
@@ -355,11 +613,38 @@ def personal_summary(
 
     recent = (q.order_by(desc(Detection.created_at)).limit(10).all())
 
+    month_start = datetime.now(timezone.utc).replace(
+        tzinfo=None, day=1, hour=0, minute=0, second=0, microsecond=0,
+    )
+    phishing_this_month = q.filter(
+        Detection.label == 1, Detection.created_at >= month_start,
+    ).count()
+
+    # Detection trend for the last 7 days (mirrors the admin dashboard's
+    # 14-day trend, scoped to this user).
+    since7 = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
+    trend_rows = (
+        db.query(
+            func.date(Detection.created_at).label("day"),
+            func.sum((Detection.label == 1).cast(Integer)).label("phishing"),
+            func.sum((Detection.label == 0).cast(Integer)).label("legitimate"),
+        )
+        .filter(Detection.user_id == user.id, Detection.created_at >= since7)
+        .group_by("day").order_by("day").all()
+    )
+    trend_7d = [
+        {"day": r.day, "phishing": int(r.phishing or 0),
+         "legitimate": int(r.legitimate or 0)}
+        for r in trend_rows
+    ]
+
     return {
         "totals": {"total": total, "phishing": phish, "legitimate": legit},
         "feature_distribution": dist,
         "recent": [DetectionOut.model_validate(r).model_dump(mode="json")
                    for r in recent],
+        "trend_7d": trend_7d,
+        "phishing_this_month": phishing_this_month,
     }
 
 
@@ -410,6 +695,22 @@ def report_url(
     db.refresh(reported)
 
     return reported
+
+
+@router.get("/api/my-reports", response_model=List[ReportedURLOut])
+def my_reports(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """The signed-in user's own reported URLs (their side of the same
+    ReportedURL table the admin sees, in full, on the Blacklist Database
+    page) - so a user can see only what they personally reported."""
+    return (
+        db.query(ReportedURL)
+        .filter(ReportedURL.user_id == user.id)
+        .order_by(desc(ReportedURL.created_at))
+        .all()
+    )
 
 # ---------------------------------------------------------------------------
 # Profile

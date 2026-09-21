@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Optional
 
 import joblib
@@ -39,6 +40,7 @@ def model_info() -> dict:
 _shap_explainer = None
 _lime_explainer = None
 _global_shap_cache: Optional[np.ndarray] = None
+_global_lime_cache: Optional[np.ndarray] = None
 
 
 def get_shap_explainer():
@@ -90,3 +92,43 @@ def global_shap_importance(sample_size: int = 500) -> np.ndarray:
 
     _global_shap_cache = np.mean(np.abs(contrib), axis=0)
     return _global_shap_cache
+
+
+def global_lime_importance(sample_size: int = 40) -> np.ndarray:
+    """
+    Mean-|LIME weight| per feature, approximated by averaging local LIME
+    explanations over a random background sample. Unlike SHAP (one fast
+    batched call), LIME retrains a local surrogate per instance, so the
+    sample stays small to keep the admin analytics page responsive.
+    Cached after the first computation.
+    """
+    global _global_lime_cache
+    if _global_lime_cache is not None:
+        return _global_lime_cache
+
+    rng = np.random.default_rng(42)
+    idx = rng.choice(
+        len(LIME_BG), size=min(sample_size, len(LIME_BG)), replace=False,
+    )
+
+    exp = get_lime_explainer()
+    totals = np.zeros(len(FEATURE_ORDER))
+    counts = np.zeros(len(FEATURE_ORDER))
+    name_pattern = [re.compile(rf"\b{re.escape(name)}\b") for name in FEATURE_ORDER]
+
+    for i in idx:
+        explanation = exp.explain_instance(
+            LIME_BG[i], MODEL.predict_proba,
+            num_features=len(FEATURE_ORDER), labels=[1],
+        )
+        for rule, weight in explanation.as_list(label=1):
+            for feat_idx, pattern in enumerate(name_pattern):
+                if pattern.search(rule):
+                    totals[feat_idx] += abs(weight)
+                    counts[feat_idx] += 1
+                    break
+
+    _global_lime_cache = np.divide(
+        totals, counts, out=np.zeros_like(totals), where=counts > 0,
+    )
+    return _global_lime_cache

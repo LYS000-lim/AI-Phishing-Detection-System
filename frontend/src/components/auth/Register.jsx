@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../AuthContext.jsx'
+import PasswordRequirements, { isPasswordValid } from '../PasswordRequirements.jsx'
+import PasswordMatch from '../PasswordMatch.jsx'
 
 const REDIRECT_SECONDS = 4
 
@@ -14,6 +16,7 @@ export default function Register() {
   const [confirm, setConfirm] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [emailError, setEmailError] = useState('')
 
   // Success-screen state
   const [success, setSuccess] = useState(null)   // { message, user } | null
@@ -33,6 +36,11 @@ export default function Register() {
   const submit = async (e) => {
     e.preventDefault()
     setError('')
+    setEmailError('')
+    if (!isPasswordValid(password)) {
+      setError('Password does not meet the requirements below')
+      return
+    }
     if (password !== confirm) {
       setError('Passwords do not match')
       return
@@ -42,7 +50,11 @@ export default function Register() {
       const res = await register(fullName, email, password)
       setSuccess(res)
     } catch (err) {
-      setError(err.message)
+      if (err.message.toLowerCase().includes('already been registered')) {
+        setEmailError(err.message)
+      } else {
+        setError(err.message)
+      }
     } finally {
       setBusy(false)
     }
@@ -114,12 +126,13 @@ export default function Register() {
           type="email"
           className="scan-input"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => { setEmail(e.target.value); setEmailError('') }}
           autoComplete="email"
           required
         />
+        {emailError && <p className="password-match bad" style={{ marginTop: 4 }}>{emailError}</p>}
 
-        <label className="auth-label" htmlFor="password">Password (min. 6 chars)</label>
+        <label className="auth-label" htmlFor="password">Password</label>
         <input
           id="password"
           type="password"
@@ -129,6 +142,7 @@ export default function Register() {
           autoComplete="new-password"
           required
         />
+        <PasswordRequirements password={password} />
 
         <label className="auth-label" htmlFor="confirm">Confirm password</label>
         <input
@@ -140,6 +154,7 @@ export default function Register() {
           autoComplete="new-password"
           required
         />
+        <PasswordMatch password={password} confirm={confirm} />
 
         {error && <div className="error-box">{error}</div>}
 

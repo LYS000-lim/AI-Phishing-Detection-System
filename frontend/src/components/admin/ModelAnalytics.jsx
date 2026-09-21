@@ -4,7 +4,7 @@ import {
   Legend, LinearScale, Tooltip,
 } from 'chart.js'
 import { Bar } from 'react-chartjs-2'
-import { adminAnalytics, adminGlobalShap } from '../../api.js'
+import { adminAnalytics, adminGlobalLime, adminGlobalShap } from '../../api.js'
 
 ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend)
 
@@ -44,11 +44,13 @@ function ConfusionMatrix({ cm, title }) {
 export default function ModelAnalytics() {
   const [data, setData] = useState(null)
   const [shap, setShap] = useState(null)
+  const [lime, setLime] = useState(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
     adminAnalytics().then(setData).catch((e) => setError(e.message))
     adminGlobalShap().then(setShap).catch(() => { /* shap is optional */ })
+    adminGlobalLime().then(setLime).catch(() => { /* lime is optional */ })
   }, [])
 
   if (error) return <div className="error-box">{error}</div>
@@ -137,28 +139,63 @@ export default function ModelAnalytics() {
         <ConfusionMatrix cm={rf.confusion_matrix} title="Random Forest - confusion matrix" />
       </div>
 
-      <section className="panel">
-        <h3>Global SHAP - most influential URL features</h3>
-        {!shap ? (
-          <p className="empty">Loading global SHAP…</p>
-        ) : (
-          <>
-            <p className="xai-note">{shap.note}</p>
-            <table className="hist">
-              <thead><tr><th>Rank</th><th>Feature</th><th>Mean |SHAP|</th></tr></thead>
-              <tbody>
-                {shap.features.map((f, i) => (
-                  <tr key={f.name}>
-                    <td>{i + 1}</td>
-                    <td className="mono">{f.name}</td>
-                    <td>{f.mean_abs_shap.toFixed(4)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
-        )}
-      </section>
+      <div className="page-header" style={{ marginTop: 8 }}>
+        <h3 style={{ margin: 0 }}>Explainable AI</h3>
+        <p className="tagline">
+          SHAP explains the model's overall behaviour across many URLs;
+          LIME explains why individual predictions were made. The
+          per-scan result page shows LIME for that one URL - the table
+          below approximates the same signal in aggregate.
+        </p>
+      </div>
+
+      <div className="split-2">
+        <section className="panel">
+          <h3>Global SHAP - most influential URL features</h3>
+          {!shap ? (
+            <p className="empty">Loading global SHAP…</p>
+          ) : (
+            <>
+              <p className="xai-note">{shap.note}</p>
+              <table className="hist">
+                <thead><tr><th>Rank</th><th>Feature</th><th>Importance</th></tr></thead>
+                <tbody>
+                  {shap.features.map((f, i) => (
+                    <tr key={f.name}>
+                      <td>{i + 1}</td>
+                      <td className="mono">{f.name}</td>
+                      <td>{f.mean_abs_shap.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </section>
+
+        <section className="panel">
+          <h3>Global LIME - most influential URL features</h3>
+          {!lime ? (
+            <p className="empty">Loading global LIME…</p>
+          ) : (
+            <>
+              <p className="xai-note">{lime.note}</p>
+              <table className="hist">
+                <thead><tr><th>Rank</th><th>Feature</th><th>Importance</th></tr></thead>
+                <tbody>
+                  {lime.features.map((f, i) => (
+                    <tr key={f.name}>
+                      <td>{i + 1}</td>
+                      <td className="mono">{f.name}</td>
+                      <td>{f.mean_abs_weight.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </section>
+      </div>
     </>
   )
 }

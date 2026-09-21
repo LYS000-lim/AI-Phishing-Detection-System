@@ -4,16 +4,20 @@ import { useAuth } from '../AuthContext.jsx'
 const userLinks = [
   { to: '/scanner', label: 'Analyse URL' },
   { to: '/dashboard', label: 'My Dashboard' },
-  { to: '/profile', label: 'Profile & History' },
+  { to: '/history', label: 'Website Scan History' },
+  { to: '/browser-extension', label: 'Browser Extension' },
+  { to: '/profile', label: 'Profile' },
 ]
 
 const adminLinks = [
-  { to: '/scanner', label: 'Analyse URL' },
   { to: '/admin', label: 'Admin Dashboard' },
+  { to: '/admin/scanner', label: 'Analyse URL' },
   { to: '/admin/logs', label: 'Detection Logs' },
   { to: '/admin/users', label: 'User Management' },
   { to: '/admin/analytics', label: 'Model Analytics' },
   { to: '/admin/blacklist', label: 'Blacklist Database' },
+  { to: '/admin/extension-monitoring', label: 'Extension Monitoring' },
+  { to: '/profile', label: 'Profile' },
 ]
 
 export default function Layout() {

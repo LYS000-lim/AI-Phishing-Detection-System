@@ -422,3 +422,31 @@ body {
 .pg-toggle-options button {
     width: auto;
 }
+
+.pg-input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    margin-top: 8px;
+    border: 1px solid #1f2937;
+    border-radius: 8px;
+    font-size: 14px;
+    background: #0b0f1a;
+    color: #e5e7eb;
+}
+
+.pg-input:focus {
+    outline: none;
+    border-color: #2563eb;
+}
+
+.pg-error {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #fecaca;
+    padding: 8px 10px;
+    border-radius: 8px;
+    margin-top: 10px;
+    font-size: 13px;
+}

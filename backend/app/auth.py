@@ -16,7 +16,14 @@ SECRET_KEY = os.environ.get(
     "change-me-in-production-this-is-a-fyp-default-secret-key",
 )
 ALGORITHM = "HS256"
-TOKEN_TTL_HOURS = 12
+# 7 days rather than a short session window: the same token is used by the
+# Chrome extension's "Website Account" sign-in (Settings page), which is
+# meant to be a set-once credential, not a daily login. A short TTL there
+# silently stops new extension detections from being recorded (the token
+# just quietly stops authenticating) with no visible error, which looked
+# like "history doesn't update" - see options.js's token-validity check for
+# the other half of that fix.
+TOKEN_TTL_HOURS = 24 * 7
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 

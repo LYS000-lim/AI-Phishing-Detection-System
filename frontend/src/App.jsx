@@ -1,20 +1,26 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './AuthContext.jsx'
 import Layout from './components/Layout.jsx'
+import Profile from './components/Profile.jsx'
 
 import Login from './components/auth/Login.jsx'
 import Register from './components/auth/Register.jsx'
 import Logout from './components/auth/Logout.jsx'
+import ForgotPassword from './components/auth/ForgotPassword.jsx'
+import ResetPassword from './components/auth/ResetPassword.jsx'
 
 import Scanner from './components/user/Scanner.jsx'
 import UserDashboard from './components/user/UserDashboard.jsx'
-import UserProfile from './components/user/UserProfile.jsx'
+import UserHistory from './components/user/UserHistory.jsx'
+import BrowserExtension from './components/user/BrowserExtension.jsx'
 
 import AdminDashboard from './components/admin/AdminDashboard.jsx'
 import AdminDetectionLogs from './components/admin/AdminDetectionLogs.jsx'
 import AdminUserManagement from './components/admin/AdminUserManagement.jsx'
 import ModelAnalytics from './components/admin/ModelAnalytics.jsx'
 import AdminBlacklist from './components/admin/AdminBlacklist.jsx'
+import AdminScanner from './components/admin/AdminScanner.jsx'
+import AdminExtensionMonitoring from './components/admin/AdminExtensionMonitoring.jsx'
 
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user, ready } = useAuth()
@@ -41,6 +47,8 @@ export default function App() {
           <Route path="/login" element={<GuestRoute><Login /></GuestRoute>} />
           <Route path="/register" element={<GuestRoute><Register /></GuestRoute>} />
           <Route path="/logout" element={<Logout />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* Everything else lives inside the shared Layout with the sidebar nav */}
           <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
@@ -49,7 +57,9 @@ export default function App() {
 
             {/* Interfaces 5-6: User-only */}
             <Route path="/dashboard" element={<UserDashboard />} />
-            <Route path="/profile" element={<UserProfile />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="/history" element={<UserHistory />} />
+            <Route path="/browser-extension" element={<BrowserExtension />} />
 
             {/* Interfaces 7-10: Admin-only */}
             <Route
@@ -71,6 +81,14 @@ export default function App() {
             <Route
               path="/admin/blacklist"
               element={<ProtectedRoute adminOnly><AdminBlacklist /></ProtectedRoute>}
+            />
+            <Route
+              path="/admin/scanner"
+              element={<ProtectedRoute adminOnly><AdminScanner /></ProtectedRoute>}
+            />
+            <Route
+              path="/admin/extension-monitoring"
+              element={<ProtectedRoute adminOnly><AdminExtensionMonitoring /></ProtectedRoute>}
             />
             </Route>
 

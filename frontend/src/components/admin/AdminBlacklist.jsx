@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 import { adminReportedURLs, exportBlacklistPDF, approveExtensionReport, rejectExtensionReport } from '../../api.js'
 
+// A "Reason" column full of paragraph-length text is unreadable in a table;
+// show a short label and let the admin open the full text on demand.
+const shortReason = (reason) => {
+  if (!reason) return null
+  const firstSentence = reason.split(/(?<=[.!?])\s/)[0]
+  return firstSentence.length <= 60 ? firstSentence : `${reason.slice(0, 57)}…`
+}
+
 export default function AdminBlacklist() {
 
   const [rows,setRows] = useState([])
@@ -11,6 +19,8 @@ export default function AdminBlacklist() {
   const [q,setQ] = useState('')
   const [loading,setLoading] = useState(true)
   const [error,setError] = useState('')
+  const [stats,setStats] = useState(null)
+  const [viewing,setViewing] = useState(null)
 
 
   const load = () => {
@@ -20,6 +30,7 @@ export default function AdminBlacklist() {
       .then((data)=>{
         setRows(data.items)
         setTotal(data.total)
+        setStats(data.stats)
       })
       .catch((e)=>setError(e.message))
       .finally(()=>setLoading(false))
@@ -85,6 +96,20 @@ export default function AdminBlacklist() {
         </p>
       </div>
 
+      {stats && (
+        <section className="panel">
+          <h3>Blacklist Statistics</h3>
+          <div className="tiles">
+            <div className="tile"><div className="v">{stats.total_saved}</div><div className="k">Total saved URLs</div></div>
+            <div className="tile"><div className="v">{stats.new_this_month}</div><div className="k">New this month</div></div>
+            <div className="tile"><div className="v">{stats.pending_reports}</div><div className="k">Pending reports</div></div>
+            <div className="tile">
+              <div className="v" style={{ fontSize: 16 }}>{stats.most_common_attack_category || 'N/A'}</div>
+              <div className="k">Most common attack category</div>
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="panel">
 
@@ -117,6 +142,7 @@ export default function AdminBlacklist() {
             <thead>
               <tr>
                 <th>URL</th>
+                <th>Reported By</th>
                 <th>Source</th>
                 <th>Attack Type</th>
                 <th>Status</th>
@@ -131,10 +157,22 @@ export default function AdminBlacklist() {
 
               {rows.map((r)=>(
 
-                <tr key={r.id}>
+                <tr key={`${r.source}-${r.id}`}>
 
                 <td className="mono ellip">
                   {r.url}
+                </td>
+
+
+                <td>
+                  {r.reported_by_name ? (
+                    <>
+                      <div>{r.reported_by_name}</div>
+                      <div className="mono muted">{r.reported_by_email}</div>
+                    </>
+                  ) : (
+                    <span className="muted">Anonymous</span>
+                  )}
                 </td>
 
 
@@ -154,7 +192,12 @@ export default function AdminBlacklist() {
 
 
                 <td>
-                  {r.detection_reason || "-"}
+                  {r.detection_reason ? (
+                    <>
+                      {shortReason(r.detection_reason)}{' '}
+                      <button className="link-btn" onClick={() => setViewing(r)}>View</button>
+                    </>
+                  ) : "-"}
                 </td>
 
 
@@ -217,6 +260,23 @@ export default function AdminBlacklist() {
 
 
       </section>
+
+      {viewing && (
+        <div className="modal-backdrop" onClick={() => setViewing(null)}>
+          <div className="modal panel" onClick={(e) => e.stopPropagation()}>
+            <h3>Detection Reason</h3>
+            <dl className="details">
+              <dt>URL</dt><dd className="mono">{viewing.url}</dd>
+              <dt>Attack type</dt><dd>{viewing.attack_type || '-'}</dd>
+              <dt>Source</dt><dd>{viewing.source || '-'}</dd>
+            </dl>
+            <p style={{ marginTop: 0 }}>{viewing.detection_reason}</p>
+            <div className="modal-actions">
+              <button className="scan-btn small" onClick={() => setViewing(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </>
   )
