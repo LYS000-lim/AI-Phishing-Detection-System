@@ -16,6 +16,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const scan = store.lastScan;
     const isPhishing = scan.prediction === "phishing";
+    const isUncertain = scan.prediction === "uncertain";
+    const statusBadgeClass = isPhishing ? "danger" : isUncertain ? "risk-medium" : "safe";
+    const statusText = isPhishing ? "PHISHING" : isUncertain ? "SUSPICIOUS" : "SAFE";
     const attack = scan.attack_type || {};
     const reasons = attack.indicators || [];
 
@@ -27,8 +30,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         <div class="pg-row">
             <span class="pg-label">Status</span>
             <span class="pg-value">
-                <span class="pg-badge ${isPhishing ? "danger" : "safe"}">
-                    ${isPhishing ? "PHISHING" : "SAFE"}
+                <span class="pg-badge ${statusBadgeClass}">
+                    ${statusText}
                 </span>
             </span>
         </div>
@@ -70,9 +73,9 @@ document.addEventListener("DOMContentLoaded", async () => {
             btn.disabled = true;
             btn.textContent = "Reporting...";
             try {
-                await fetch("http://localhost:8000/api/extension/report", {
+                await fetch("http://127.0.0.1:8000/api/extension/report", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json", ...(await pgAuthHeaders()) },
                     body: JSON.stringify({
                         url: scan.url,
                         attack_type: attack.category || "Unknown",

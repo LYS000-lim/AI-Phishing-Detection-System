@@ -34,7 +34,10 @@ async function request(path, { method = 'GET', body, auth = true } = {}) {
 function errorMessage(data, status) {
   if (typeof data.detail === 'string') return data.detail
   if (Array.isArray(data.detail) && data.detail.length) {
-    return data.detail.map((d) => d.msg || JSON.stringify(d)).join('; ')
+    // Pydantic prefixes custom validator messages with "Value error, ".
+    return data.detail
+      .map((d) => (d.msg || JSON.stringify(d)).replace(/^Value error, /, ''))
+      .join('; ')
   }
   return `Request failed (${status})`
 }
@@ -63,6 +66,8 @@ export const reportURL = (payload) =>
     body: payload,
   })
 export const myReports = () => request('/api/my-reports')
+export const myBlockedURLs = () => request('/api/my-blocked-urls')
+export const unblockURL = (id) => request(`/api/my-blocked-urls/${id}`, { method: 'DELETE' })
 
 // ------ Personal history + dashboard ------
 export const myDetections = (
@@ -204,7 +209,9 @@ export const adminGlobalLime = (top = 20) => request(`/api/admin/analytics/globa
 export const adminReportedURLs = (
   q = '',
   page = 1,
-  pageSize = 20
+  pageSize = 20,
+  dateFrom = '',
+  dateTo = '',
 ) => {
   const params = new URLSearchParams()
 
@@ -212,6 +219,8 @@ export const adminReportedURLs = (
   params.set('page_size', pageSize)
 
   if (q) params.set('q', q)
+  if (dateFrom) params.set('date_from', dateFrom)
+  if (dateTo) params.set('date_to', dateTo)
 
   return request(
     `/api/admin/reported-urls?${params.toString()}`
@@ -238,7 +247,7 @@ export const rejectExtensionReport = (id) =>
   )
 
 // ------ Admin Blacklist Export ------
-export const exportBlacklistPDF = async () => {
+export const exportBlacklistPDF = async (dateFrom = '', dateTo = '') => {
   const token = getToken()
 
   const headers = {}
@@ -248,7 +257,9 @@ export const exportBlacklistPDF = async () => {
   }
 
   const res = await fetch(
-    `${BASE}/api/admin/reported-urls/export`,
+    `${BASE}/api/admin/reported-urls/export?${new URLSearchParams(
+      Object.entries({ date_from: dateFrom, date_to: dateTo }).filter(([, v]) => v),
+    ).toString()}`,
     {
       method: 'GET',
       headers,

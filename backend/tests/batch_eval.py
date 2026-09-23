@@ -6,6 +6,12 @@ set with a statistically meaningful sample size.
 Sources:
 - tranco_legitimate.csv : 50,000 real legitimate URLs (Tranco top list)
 - top-1m.csv            : top 5,000 domains by popularity rank
+- additional_legitimate_urls.csv + additional_opensource_urls.csv :
+                          ~760 real legitimate DEEP LINKS (docs, repos,
+                          versioned paths) - never used in training
+
+Reports the raw 0.5 false-positive rate, plus what the live app shows
+with the tuned thresholds: hard "phishing" verdicts vs. "uncertain".
 
 Run: python backend/tests/batch_eval.py
 Saves: outputs/batch_eval_results.csv (per-URL) + prints a summary.
@@ -24,6 +30,8 @@ import pandas as pd
 from app.features import URL_ONLY_FEATURES, compute_features
 
 TOP_N_DOMAINS = 5000
+pd.set_option("display.width", 200)
+pd.set_option("display.max_columns", None)
 
 
 def _predict(urls, model, tld_lookup, char_lookup):
@@ -38,7 +46,10 @@ def main():
     outputs_dir = os.path.join(ROOT, "outputs")
     tld_lookup = joblib.load(os.path.join(outputs_dir, "tld_probability_lookup.joblib"))
     char_lookup = joblib.load(os.path.join(outputs_dir, "char_probability_lookup.joblib"))
-    model = joblib.load(os.path.join(outputs_dir, "rf_model.joblib"))
+    model = joblib.load(os.path.join(outputs_dir, "deployment_model.joblib"))
+    thresholds = joblib.load(os.path.join(outputs_dir, "deployment_metrics.joblib")).get("thresholds", {})
+    t_phish = float(thresholds.get("phishing", 0.5))
+    t_unc = float(thresholds.get("uncertain", t_phish))
 
     rows = []
 
@@ -57,16 +68,29 @@ def main():
         rows.append({"source": "top_1m_domains", "url": u, "expected": 0,
                      "predicted": int(p), "p_phish": round(float(pr), 3)})
 
+    deep = pd.concat([
+        pd.read_csv(os.path.join(ROOT, "additional_legitimate_urls.csv")),
+        pd.read_csv(os.path.join(ROOT, "additional_opensource_urls.csv")),
+    ])["url"].dropna().astype(str).drop_duplicates().tolist()
+    pred3, proba3 = _predict(deep, model, tld_lookup, char_lookup)
+    for u, p, pr in zip(deep, pred3, proba3):
+        rows.append({"source": "real_deeplinks", "url": u, "expected": 0,
+                     "predicted": int(p), "p_phish": round(float(pr), 3)})
+
     results = pd.DataFrame(rows)
     results["correct"] = results["predicted"] == results["expected"]
     out_path = os.path.join(outputs_dir, "batch_eval_results.csv")
     results.to_csv(out_path, index=False)
 
+    results["hard_phishing"] = results["p_phish"] >= t_phish
+    results["flagged_any"] = results["p_phish"] >= t_unc
     summary = results.groupby("source").agg(
         n=("correct", "size"),
-        fp_rate=("predicted", "mean"),
-        accuracy=("correct", "mean"),
+        fp_rate_at_0_5=("predicted", "mean"),
+        phishing_verdict_rate=("hard_phishing", "mean"),
+        uncertain_or_phishing=("flagged_any", "mean"),
     ).round(4)
+    print(f"Tuned thresholds: phishing>={t_phish}, uncertain>={t_unc}")
     print(summary)
     print(f"\nOverall FP rate: {results['predicted'].mean():.4f} "
           f"({results['predicted'].sum()} of {len(results)})")

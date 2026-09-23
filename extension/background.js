@@ -1,15 +1,41 @@
-const API_BASE = "http://localhost:8000/api/extension";
+const API_BASE = "http://127.0.0.1:8000/api/extension";
 const SCAN_URL = `${API_BASE}/scan`;
 const CHECK_BLACKLIST_URL = `${API_BASE}/check-blacklist`;
 const REPORT_URL = `${API_BASE}/report`;
+const USER_BLOCKS_URL = `${API_BASE}/user-blocks`;
+
+async function authHeaders() {
+    const auth = await chrome.storage.session.get("pgAuthToken");
+    return auth.pgAuthToken ? { Authorization: `Bearer ${auth.pgAuthToken}` } : {};
+}
 
 const HISTORY_LIMIT = 200;
 
+// Local/private hosts (localhost, loopback, LAN, link-local) have no real
+// domain reputation to evaluate -- the phishing model reads them as
+// suspicious purely because they lack a registrable domain/TLD, which
+// would misfire as a false "phishing" warning on the user's own dev
+// server or LAN devices. Skip scanning them entirely.
+function isLocalOrPrivateHost(hostname) {
+    const host = (hostname || "").toLowerCase();
+    if (host === "localhost" || host.endsWith(".localhost")) return true;
+    if (host === "0.0.0.0" || host === "::1" || host === "[::1]") return true;
+    if (/^127\./.test(host)) return true;
+    if (/^10\./.test(host)) return true;
+    if (/^192\.168\./.test(host)) return true;
+    if (/^169\.254\./.test(host)) return true;
+    if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return true;
+    return false;
+}
+
 function isScannable(url) {
-    return (
-        typeof url === "string" &&
-        (url.startsWith("http://") || url.startsWith("https://"))
-    );
+    if (typeof url !== "string") return false;
+    if (!(url.startsWith("http://") || url.startsWith("https://"))) return false;
+    try {
+        return !isLocalOrPrivateHost(new URL(url).hostname);
+    } catch {
+        return false;
+    }
 }
 
 // ----------------------------------------------------------------
@@ -35,17 +61,39 @@ async function addBypass(url) {
 // from the server-side admin-approved blacklist.
 // ----------------------------------------------------------------
 
+// Matched by HOSTNAME, not the exact URL string. A phishing site is
+// blocked as a whole domain, not one specific path/query-string variant of
+// it -- matching on the full URL meant revisiting the "same" site (a
+// trailing slash, a redirect, a different query string, an http->https
+// upgrade) silently skipped the block, which is exactly what was reported
+// as "sometimes it shows, sometimes it doesn't". Old entries saved before
+// this change have no `hostname` field, so it's derived from `entry.url` on
+// the fly as a fallback -- no storage migration needed.
+function hostnameOf(url) {
+    try {
+        return new URL(url).hostname.toLowerCase();
+    } catch {
+        return "";
+    }
+}
+
 async function isLocallyBlocked(url) {
+    const host = hostnameOf(url);
+    if (!host) return false;
     const store = await chrome.storage.local.get("userBlockedUrls");
     const list = store.userBlockedUrls || [];
-    return list.some((entry) => entry.url === url);
+    return list.some((entry) => (entry.hostname || hostnameOf(entry.url)) === host);
 }
 
 async function addLocalBlock(url) {
+    const hostname = hostnameOf(url);
     const store = await chrome.storage.local.get("userBlockedUrls");
     const list = store.userBlockedUrls || [];
-    if (!list.some((entry) => entry.url === url)) {
-        list.unshift({ url, time: Date.now() });
+    const alreadyBlocked = list.some(
+        (entry) => (entry.hostname || hostnameOf(entry.url)) === hostname,
+    );
+    if (!alreadyBlocked) {
+        list.unshift({ url, hostname, time: Date.now() });
         if (list.length > 500) list.length = 500;
         await chrome.storage.local.set({ userBlockedUrls: list });
     }
@@ -134,6 +182,35 @@ async function announceSafeToast(tabId, result) {
     }
 }
 
+// Neutral, non-blocking notice for the new "uncertain" verdict (see
+// explanations.is_https_only_verdict on the backend) — deliberately NOT the
+// green "safe" toast (would falsely reassure) and NOT the red blocking
+// warning page (the model isn't actually confident this is phishing).
+async function announceUncertainToast(tabId, result) {
+    const payload = {
+        url: result.url,
+        reason: result.uncertain_reason === "reputable_domain"
+            ? `Address pattern resembles phishing, but ${result.reputation?.domain} is a well-established website. Check the domain carefully.`
+            : result.uncertain_reason === "borderline"
+            ? "Some URL characteristics resemble phishing, but not enough to confirm it."
+            : "Flagged mainly because the site does not use HTTPS.",
+        time: Date.now(),
+    };
+
+    const key = `uncertainToast_${tabId}`;
+    await chrome.storage.session.set({ [key]: payload });
+
+    try {
+        await chrome.tabs.sendMessage(tabId, {
+            action: "SHOW_UNCERTAIN_TOAST",
+            data: payload,
+        });
+    } catch (error) {
+        // Content script not injected/listening yet — GET_UNCERTAIN_TOAST
+        // (pull) will pick this up from session storage instead.
+    }
+}
+
 // ----------------------------------------------------------------
 // Navigation interception — runs BEFORE the target page loads, so a
 // phishing domain that fails DNS/never renders is still scanned and
@@ -155,8 +232,14 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
         return;
     }
 
-    // 1. Locally blocked by this user ("Block URL")
-    if (await isLocallyBlocked(url)) {
+    // Signed in: the user's "Block URL" list lives on their account and is
+    // checked server-side by check-blacklist (so unblocking on the website
+    // takes effect). The local list is used when signed out, or as a
+    // fallback if the server can't be reached.
+    const auth = await authHeaders();
+    const signedIn = !!auth.Authorization;
+
+    const blockLocally = async () => {
         await recordHistory({
             url,
             prediction: "phishing",
@@ -169,13 +252,19 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
             domain: url,
             reason: "You previously chose to block this website.",
         });
+    };
+
+    // 1. Locally blocked by this user ("Block URL") - signed-out only
+    if (!signedIn && await isLocallyBlocked(url)) {
+        await blockLocally();
         return;
     }
 
-    // 2. Admin-approved blacklist
+    // 2. Admin-approved blacklist (+ the user's own account block list)
     try {
         const res = await fetch(
-            `${CHECK_BLACKLIST_URL}?url=${encodeURIComponent(url)}`
+            `${CHECK_BLACKLIST_URL}?url=${encodeURIComponent(url)}`,
+            { headers: auth },
         );
         const blacklist = await res.json();
 
@@ -185,7 +274,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
                 prediction: "phishing",
                 risk_level: blacklist.risk_level || "High",
                 confidence: null,
-                attack_type: "Blacklisted domain",
+                attack_type: blacklist.by_user ? "Blocked by user" : "Blacklisted domain",
             });
             await showWarningPage(details.tabId, "blocked", {
                 url,
@@ -198,6 +287,10 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
         }
     } catch (error) {
         console.error("PhishGuard blacklist check failed:", error);
+        if (signedIn && await isLocallyBlocked(url)) {
+            await blockLocally();
+            return;
+        }
     }
 
     // 3. ML analysis (and trusted-domain bypass, handled server-side)
@@ -231,6 +324,8 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
                 url,
                 result,
             });
+        } else if (result.prediction === "uncertain") {
+            await announceUncertainToast(details.tabId, result);
         } else {
             await announceSafeToast(details.tabId, result);
         }
@@ -313,6 +408,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return;
         }
 
+        if (message.action === "GET_UNCERTAIN_TOAST") {
+            const tabId = sender.tab?.id;
+            if (tabId == null) {
+                sendResponse(null);
+                return;
+            }
+            const key = `uncertainToast_${tabId}`;
+            const store = await chrome.storage.session.get(key);
+            const data = store[key] || null;
+            if (data) {
+                await chrome.storage.session.remove(key);
+            }
+            sendResponse(data);
+            return;
+        }
+
         if (message.action === "CONTINUE_ACCESS") {
             await addBypass(message.url);
             const tabId = message.tabId ?? sender.tab?.id;
@@ -340,10 +451,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (message.action === "BLOCK_URL") {
             await addLocalBlock(message.url);
 
+            // Signed in: also save it to the account so the user can see
+            // (and unblock) it on the website's Browser Extension page.
+            const auth = await authHeaders();
+            if (auth.Authorization) {
+                try {
+                    await fetch(USER_BLOCKS_URL, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", ...auth },
+                        body: JSON.stringify({ url: message.url, attack_type: message.attackType || null }),
+                    });
+                } catch (error) {
+                    console.error("PhishGuard save-block failed:", error);
+                }
+            }
+
             try {
+                // Signed in: the report is attributed to the account.
                 await fetch(REPORT_URL, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
                     body: JSON.stringify({
                         url: message.url,
                         attack_type: message.attackType || "Unknown",
@@ -364,23 +491,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // ----------------------------------------------------------------
-// History-recording consent prompt.
+// History-recording consent/settings prompt.
 //
-// chrome.runtime.onInstalled only reliably fires with reason "install" on
-// a genuinely first-ever install; reloading an unpacked extension during
-// development fires "update" (or sometimes nothing consistent at all), so
-// gating on reason === "install" alone silently skipped the prompt while
-// iterating. Instead: whenever the service worker starts up, if consent
-// hasn't been recorded yet, open the prompt — guarded by a session flag so
-// a MV3 service worker that spins up/down repeatedly doesn't spawn a new
-// tab every time it wakes.
+// By design this opens every time the extension starts up (browser start,
+// or the extension being re-enabled after being toggled off) — not just
+// the very first time it's ever installed — so the user always sees it
+// confirm PhishGuard is active. It does NOT reset any saved preference;
+// historyRecordingEnabled keeps whatever the user last chose, this just
+// re-shows the settings page where that choice is visible.
+//
+// chrome.runtime.onInstalled/onStartup, plus the unconditional call at the
+// bottom of this file (covers the service worker simply being (re)loaded,
+// which is how "the extension was turned back on" actually surfaces —
+// there's no dedicated Chrome event for that), can all fire for the same
+// wake-up. Guarding only with an awaited chrome.storage.session check was
+// racy: two callers could both read "not opened yet" before either finished
+// writing, opening two tabs at once. `promptGuardStarted` closes that
+// window synchronously (before any await), so only the first caller in a
+// given service-worker lifetime gets past it; the session storage flag
+// still prevents a second tab if the worker spins down and back up within
+// the same browser session.
 // ----------------------------------------------------------------
 
+let promptGuardStarted = false;
+
 async function ensureConsentPrompt() {
-    const local = await chrome.storage.local.get("historyConsentGiven");
-    if (local.historyConsentGiven) {
+    if (promptGuardStarted) {
         return;
     }
+    promptGuardStarted = true;
 
     const session = await chrome.storage.session.get("consentPromptOpened");
     if (session.consentPromptOpened) {

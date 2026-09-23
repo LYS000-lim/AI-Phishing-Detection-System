@@ -379,6 +379,7 @@ body {
 }
 
 .pg-btn.selected {
+    background: #2563eb;
     border: 2px solid #60a5fa;
     box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.25), 0 0 14px rgba(96, 165, 250, 0.55);
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { utcDate } from '../dates.js'
 import { personalSummary, updateProfile } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 
@@ -10,7 +11,7 @@ const initialsOf = (name) =>
     .map((w) => w[0].toUpperCase())
     .join('') || '?'
 
-const fmt = (iso) => (iso ? new Date(iso).toLocaleString() : 'Never')
+const fmt = (iso) => (iso ? utcDate(iso).toLocaleString('en-GB') : 'Never')
 
 export default function Profile() {
   const { user, refresh } = useAuth()
@@ -92,7 +93,7 @@ export default function Profile() {
         <div className="tiles">
           <div className="tile">
             <div className="v" style={{ fontSize: 16 }}>
-              {user?.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}
+              {user?.created_at ? utcDate(user.created_at).toLocaleDateString('en-GB') : '-'}
             </div>
             <div className="k">Member Since</div>
           </div>

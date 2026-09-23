@@ -7,9 +7,20 @@ const pct = (value) => `${((value ?? 0) * 100).toFixed(1)}%`
 // since the model picks the higher-probability class) into a plain-language
 // label + short explanation, so users see "Medium" instead of just "58%".
 // Display-only — does not change the underlying probability or verdict.
-const confidenceInfo = (value, prediction) => {
+const confidenceInfo = (value, prediction, uncertainReason) => {
   const value100 = (value ?? 0) * 100
   const noun = prediction === 'phishing' ? 'phishing' : 'legitimate'
+
+  if (prediction === 'uncertain') {
+    return {
+      label: 'Low',
+      text: uncertainReason === 'reputable_domain'
+        ? 'The URL pattern alone scores high, but the domain\'s reputation outweighs it, so this is not treated as a confirmed phishing result.'
+        : uncertainReason === 'https_only'
+        ? 'The phishing score is driven mainly by the missing HTTPS connection rather than a broad match with known phishing patterns.'
+        : 'The phishing score is below the level the system requires to confirm a URL as phishing.',
+    }
+  }
 
   if (value100 >= 80) {
     return {
@@ -43,7 +54,7 @@ const signed = (value) => {
   return `${n >= 0 ? '+' : ''}${n.toFixed(5)}`
 }
 
-const BOOLEAN_FEATURES = new Set(['IsHTTPS', 'IsDomainIP', 'HasObfuscation'])
+const BOOLEAN_FEATURES = new Set(['IsHTTPS', 'IsDomainIP', 'HasObfuscation', 'HasBrandOutsideDomain'])
 
 const COUNT_UNITS = {
   URLLength: 'characters',
@@ -57,6 +68,7 @@ const COUNT_UNITS = {
   NoOfQMarkInURL: "'?' characters",
   NoOfAmpersandInURL: "'&' characters",
   NoOfOtherSpecialCharsInURL: 'characters',
+  NoOfSuspiciousWords: 'words',
 }
 
 const RATIO_FEATURES = new Set([
@@ -181,6 +193,10 @@ export default function Scanner({ scanFn = scanURL }) {
 
   const isTrusted = Boolean(result?.trusted_domain || result?.matched_domain)
   const isPhish = Boolean(result) && !isTrusted && result.prediction === 'phishing'
+  const isUncertain = Boolean(result) && !isTrusted && result.prediction === 'uncertain'
+  const isBorderline = isUncertain && result.uncertain_reason === 'borderline'
+  const isReputable = isUncertain && result.uncertain_reason === 'reputable_domain'
+  const rep = result?.reputation
   const isLegitimate = Boolean(result) && !isTrusted && result.prediction === 'legitimate'
   const riskClass = result?.risk_level?.toLowerCase() || 'low'
 
@@ -231,20 +247,22 @@ export default function Scanner({ scanFn = scanURL }) {
       </section>
 
       {result && (
-        <section className={`scan-result ${isTrusted ? 'trusted' : isPhish ? 'phish' : 'legit'}`}>
+        <section className={`scan-result ${isTrusted ? 'trusted' : isPhish ? 'phish' : isUncertain ? 'uncertain' : 'legit'}`}>
           <div className="result-kicker">Scan Result</div>
 
           <div className="result-header">
             <div>
               <div className="result-status">
                 <span className="status-icon" aria-hidden>
-                  {isPhish ? '⚠' : '✓'}
+                  {isPhish || isUncertain ? '⚠' : '✓'}
                 </span>
                 {isTrusted
                   ? 'TRUSTED DOMAIN VERIFIED'
                   : isPhish
                     ? 'PHISHING DETECTED'
-                    : 'LEGITIMATE'}
+                    : isUncertain
+                      ? 'SUSPICIOUS – PROCEED WITH CAUTION'
+                      : 'LEGITIMATE'}
               </div>
               <div className="result-url mono">{result.url}</div>
             </div>
@@ -281,7 +299,7 @@ export default function Scanner({ scanFn = scanURL }) {
               </div>
               <div className="metric-card">
                 <span className="metric-label">Confidence</span>
-                <strong>{confidenceInfo(result.confidence, result.prediction).label}</strong>
+                <strong>{confidenceInfo(result.confidence, result.prediction, result.uncertain_reason).label}</strong>
                 <span className="metric-sub">{pct(result.confidence)}</span>
               </div>
             </div>
@@ -289,7 +307,7 @@ export default function Scanner({ scanFn = scanURL }) {
 
           {!isTrusted && (
             <p className="confidence-note">
-              {confidenceInfo(result.confidence, result.prediction).text}
+              {confidenceInfo(result.confidence, result.prediction, result.uncertain_reason).text}
             </p>
           )}
 
@@ -314,6 +332,51 @@ export default function Scanner({ scanFn = scanURL }) {
                     : reporting
                       ? 'Reporting…'
                       : 'Report URL'}
+                </button>
+              </div>
+            </>
+          )}
+
+          {isUncertain && (
+            <>
+              <div className="security-recommendation low-confidence-note">
+                <span className="rec-icon" aria-hidden>ℹ</span>
+                <div>
+                  <div className="rec-label">Low-confidence result</div>
+                  {isReputable ? (
+                  <div>
+                    The address pattern resembles phishing
+                    ({pct(result.phishing_probability)} phishing score), but it belongs
+                    to <strong>{rep?.domain}</strong>, a well-established website (ranked
+                    #{rep?.rank?.toLocaleString()} globally). This is <strong>not a confirmed
+                    phishing detection</strong> – make sure the domain is exactly {rep?.domain}{' '}
+                    before entering passwords or payment details.
+                  </div>
+                  ) : (
+                  <div>
+                    The AI model is not certain about this URL
+                    ({pct(result.phishing_probability)} phishing score).{' '}
+                    {isBorderline
+                      ? 'Some URL characteristics resemble phishing, but not strongly enough to confirm it.'
+                      : 'It was flagged mainly because the site does not use a secure HTTPS connection.'}
+                    {' '}This is <strong>not a confirmed phishing detection</strong> – check
+                    the domain name carefully before entering passwords or payment details.
+                  </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="result-actions">
+                <button
+                  className="report-btn"
+                  onClick={handleReport}
+                  disabled={reporting || reported}
+                >
+                  {reported
+                    ? 'URL Reported'
+                    : reporting
+                      ? 'Reporting…'
+                      : 'Report as Suspicious'}
                 </button>
               </div>
             </>
@@ -454,6 +517,92 @@ export default function Scanner({ scanFn = scanURL }) {
                       <dd className="mono evidence-danger">{signed(item.shap_contribution)}</dd>
                       <dt>LIME Contribution</dt>
                       <dd className="mono evidence-danger">{signed(item.lime_contribution)}</dd>
+                    </dl>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      {isUncertain && (
+        <>
+          <section className="panel result-section security-analysis">
+            <h3>Security Analysis</h3>
+            <div className="security-recommendation" style={{ marginTop: 0 }}>
+              <span className="rec-icon" aria-hidden>⚠</span>
+              <strong>Suspicious – this website could not be confirmed as safe.</strong>
+            </div>
+            {(explain?.security_analysis || []).map((line, index) => (
+              <p key={index}>{line}</p>
+            ))}
+          </section>
+
+          <section className="panel result-section">
+            <h3>Why is this URL marked suspicious?</h3>
+            <p className="section-intro">
+              This URL was <strong>not classified as confirmed phishing</strong> —
+              {isReputable
+                ? ` its address pattern resembles phishing, but ${rep?.domain} is a well-established website, so these signals are treated as caution flags rather than proof:`
+                : isBorderline
+                ? ' its phishing score is in the borderline range, so these signals are treated as caution flags rather than proof:'
+                : ' the model\'s own top signal for it is a missing HTTPS connection, which is treated as a caution flag rather than proof:'}
+            </p>
+
+            <p className="reason-lead">The AI identified:</p>
+            <ul className="reason-list phishing-reasons">
+              {reasons.slice(0, 4).map((reason, index) => {
+                const parsed = splitReason(reason)
+                return (
+                  <li key={index}>
+                    {parsed.label && <strong className="reason-label">{parsed.label}</strong>}
+                    <span>{parsed.text}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+
+          <section className="panel result-section">
+            <h3>AI Explanation Evidence</h3>
+            <p className="section-intro">
+              Only the most important model contributors are shown.
+            </p>
+
+            {!explain ? (
+              <p className="empty">Computing explanation…</p>
+            ) : evidence.length === 0 ? (
+              <p className="empty">No strong explanation evidence was available.</p>
+            ) : (
+              <div className="evidence-list">
+                {evidence.map((item) => (
+                  <article className="evidence-card phishing-evidence" key={item.feature}>
+                    <div className="evidence-title">
+                      <span aria-hidden>❓</span>
+                      {item.title}
+                    </div>
+                    {item.found && (
+                      <p>
+                        <span className="evidence-kicker">What the AI found: </span>
+                        {item.found}
+                      </p>
+                    )}
+                    {item.why_it_matters && (
+                      <p>
+                        <span className="evidence-kicker">Why this matters: </span>
+                        {item.why_it_matters}
+                      </p>
+                    )}
+                    <dl className="evidence-details">
+                      <dt>Feature</dt>
+                      <dd className="mono">{item.feature}</dd>
+                      <dt>Detected Value</dt>
+                      <dd className="mono">{formatDetectedValue(item.feature, item.detected_value)}</dd>
+                      <dt>SHAP Contribution</dt>
+                      <dd className="mono">{signed(item.shap_contribution)}</dd>
+                      <dt>LIME Contribution</dt>
+                      <dd className="mono">{signed(item.lime_contribution)}</dd>
                     </dl>
                   </article>
                 ))}

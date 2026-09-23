@@ -6,6 +6,7 @@ const userLinks = [
   { to: '/dashboard', label: 'My Dashboard' },
   { to: '/history', label: 'Website Scan History' },
   { to: '/browser-extension', label: 'Browser Extension' },
+  { to: '/blocked-websites', label: 'Blocked Websites' },
   { to: '/profile', label: 'Profile' },
 ]
 

@@ -7,6 +7,7 @@ def _utc_now():
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -127,6 +128,16 @@ class ExtensionReport(Base):
         nullable=True,
     )
 
+    # Set when the extension is signed in to a website account, so the
+    # admin can see who reported/blocked it (NULL = anonymous).
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    user = relationship("User")
+
     detection_reason = Column(
         Text,
         nullable=True,
@@ -170,9 +181,12 @@ class PasswordResetToken(Base):
         Integer, ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
+    # sha256 of "<user_id>:<6-digit code>" - the emailed reset code.
     token_hash = Column(String(64), nullable=False, unique=True, index=True)
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
+    # Wrong-code guesses; the code is burned after MAX_CODE_ATTEMPTS.
+    attempts = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, nullable=False, default=_utc_now)
 
 
@@ -214,3 +228,19 @@ class BlockedURL(Base):
         default=_utc_now,
         index=True,
     )
+
+class UserBlockedURL(Base):
+    """A website a signed-in user blocked from the extension's warning page
+    ("Block URL"). Stored per user so the block follows their account (any
+    browser they sign the extension into) and they can review/unblock it on
+    the website's Browser Extension page. Matched by hostname, like the
+    extension's local block list."""
+    __tablename__ = "user_blocked_urls"
+    __table_args__ = (UniqueConstraint("user_id", "hostname", name="uq_user_blocked_host"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    url = Column(Text, nullable=False)
+    hostname = Column(String(255), nullable=False, index=True)
+    attack_type = Column(String(64), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=_utc_now, index=True)

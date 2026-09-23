@@ -316,6 +316,7 @@ body {
 .badge { padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 .badge.legit { background: rgba(16, 185, 129, .18); color: var(--good); }
 .badge.phish { background: rgba(239, 68, 68, .18); color: var(--bad); }
+.badge.review { background: rgba(245, 158, 11, .18); color: var(--warn); }
 
 .tag {
   display: inline-block; margin-left: 8px;
@@ -469,6 +470,9 @@ body {
 .scan-result.trusted,
 .scan-result.legit { border-left-color: var(--good); }
 .scan-result.phish { border-left-color: var(--bad); }
+.scan-result.uncertain { border-left-color: var(--warn); }
+
+.risk-review { background: rgba(245, 158, 11, .18); color: var(--warn); }
 
 .result-kicker {
   color: var(--muted);
@@ -500,6 +504,7 @@ body {
 .scan-result.trusted .result-status,
 .scan-result.legit .result-status { color: var(--good); }
 .scan-result.phish .result-status { color: var(--bad); }
+.scan-result.uncertain .result-status { color: var(--warn); }
 
 .status-icon { font-size: 18px; line-height: 1; }
 
@@ -874,6 +879,50 @@ body {
   align-items: center;
   gap: 6px;
   color: var(--muted);
+  font-size: 12px;
+}
+
+.date-input-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.date-input-wrap input[type="text"] {
+  width: 132px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 32px 8px 10px;
+  font-family: inherit;
+}
+
+.date-picker-btn {
+  position: absolute;
+  right: 4px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+}
+
+/* Native picker kept only to show the calendar popup; the text field
+   is what the user sees (so the display is always DD/MM/YYYY). */
+.date-picker-hidden {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.date-error {
+  flex-basis: 100%;
+  color: #ef4444;
   font-size: 12px;
 }
 

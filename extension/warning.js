@@ -173,9 +173,9 @@ function wireButtons(url, attackCategory, tabId) {
             reportBtn.disabled = true;
             reportBtn.textContent = "Reporting...";
             try {
-                await fetch("http://localhost:8000/api/extension/report", {
+                await fetch("http://127.0.0.1:8000/api/extension/report", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json", ...(await pgAuthHeaders()) },
                     body: JSON.stringify({
                         url,
                         attack_type: attackCategory || "Unknown",

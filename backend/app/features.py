@@ -1,10 +1,12 @@
 import ipaddress
 import os
 import re
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import joblib
 import numpy as np
+
+from .phishing_type import BRANDS, CREDENTIAL_KEYWORDS, FINANCIAL_KEYWORDS, _is_official_host
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _OUTPUTS = os.path.join(_HERE, "..", "..", "outputs")
@@ -16,6 +18,10 @@ URL_ONLY_FEATURES = [
     "LetterRatioInURL", "NoOfDegitsInURL", "DegitRatioInURL",
     "NoOfEqualsInURL", "NoOfQMarkInURL", "NoOfAmpersandInURL",
     "NoOfOtherSpecialCharsInURL", "SpacialCharRatioInURL", "IsHTTPS",
+    # Word-level signals (added 2026-09-23): the 20 structural features
+    # above can't "read" a URL, so .../account-update-login?verify=paypal
+    # on an innocent-looking host scored as legitimate.
+    "NoOfSuspiciousWords", "HasBrandOutsideDomain",
 ]
 FEATURE_ORDER = URL_ONLY_FEATURES  # exported name for other modules
 
@@ -45,9 +51,42 @@ def _is_ip(host: str) -> int:
         return 0
 
 
+# Marketing/analytics parameters that sites append to ordinary links.
+# They carry no information about whether the page is phishing, but they
+# make a legitimate link long and full of "=", "&", "_" and digits - the
+# exact lexical signals the model associates with phishing.
+_TRACKING_PARAMS = {
+    "fbclid", "gclid", "dclid", "gbraid", "wbraid", "msclkid", "yclid",
+    "mc_cid", "mc_eid", "igshid", "_ga", "_gl", "ref", "ref_src", "ref_url",
+    "spm", "scid", "si", "trk", "mkt_tok", "_hsenc", "_hsmi", "cmpid",
+    "s_cid", "vero_id", "share", "feature",
+}
+
+
+def _is_tracking_param(name: str) -> bool:
+    n = name.lower()
+    return n in _TRACKING_PARAMS or n.startswith(("utm_", "oly_", "pk_"))
+
+
+def strip_tracking(url: str) -> str:
+    """Drop the #fragment and tracking query parameters (utm_*, fbclid,
+    gclid, ...). Keeps every other parameter unchanged, so a phishing URL's
+    real payload (?id=..&acct=..) is still measured."""
+    parsed = urlparse(url)
+    if not parsed.query and not parsed.fragment:
+        return url
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    kept = [(k, v) for k, v in pairs if not _is_tracking_param(k)]
+    # Re-encode only if something was removed, so untouched queries keep
+    # their exact original characters.
+    query = parsed.query if len(kept) == len(pairs) else urlencode(kept)
+    return urlunparse(parsed._replace(query=query, fragment=""))
+
+
 def canonicalize_url(url: str) -> str:
     """
-    Ensure a scheme, then strip a leading "www." host label.
+    Ensure a scheme, strip a leading "www." host label, and remove the
+    #fragment + tracking parameters (see strip_tracking).
 
     Training data (PhiUSIIL) recorded every legitimate URL as "www.<domain>"
     but phishing URLs inconsistently, so without this a bare domain like
@@ -68,12 +107,63 @@ def canonicalize_url(url: str) -> str:
         parsed = parsed._replace(netloc=netloc)
         raw = urlunparse(parsed)
 
+    raw = strip_tracking(raw)
+
+    # Drop trailing slashes ("site.com/" -> "site.com", "/learn/" ->
+    # "/learn"). In PhiUSIIL 31% of phishing URLs are "domain.com/" but 0%
+    # of legitimate ones, so the model had learned "ends with / = phishing"
+    # (https://www.google.com/ scored 84%) - a dataset artifact, not a real
+    # signal.
+    parsed = urlparse(raw)
+    if parsed.path.endswith("/"):
+        raw = urlunparse(parsed._replace(path=parsed.path.rstrip("/")))
     return raw
+
+
+_SUSPICIOUS_WORDS = sorted(
+    {w for w in CREDENTIAL_KEYWORDS + FINANCIAL_KEYWORDS if "-" not in w}
+)
+_BRAND_ALIASES = [
+    (alias, meta["official_domains"])
+    for meta in BRANDS.values() for alias in meta["aliases"]
+]
+
+
+def _tokens(text: str) -> list:
+    return [t for t in re.split(r"[^a-z0-9]+", text.lower()) if t]
+
+
+def _word_in(word: str, tokens: list) -> bool:
+    """Whole-token match; longer words may also start/end a token
+    ("paypalsecure", "verification", "securelogin"). Short words must match
+    exactly so "card" doesn't fire on "cardiff", and a word buried mid-token
+    doesn't count ("designing" is not "signin")."""
+    return any(
+        t == word or (len(word) >= 5 and (t.startswith(word) or t.endswith(word)))
+        for t in tokens
+    )
+
+
+def suspicious_word_count(raw: str) -> int:
+    """Distinct credential/financial words (login, verify, account, bank,
+    ...) anywhere after the scheme."""
+    tokens = _tokens(raw.split("://", 1)[-1])
+    return sum(_word_in(w, tokens) for w in _SUSPICIOUS_WORDS)
+
+
+def brand_outside_domain(raw: str, host: str) -> int:
+    """1 if a well-known brand name (paypal, maybank, amazon, ...) appears
+    in the URL while the host is NOT that brand's official domain."""
+    tokens = _tokens(raw.split("://", 1)[-1])
+    return int(any(
+        _word_in(alias, tokens) and not _is_official_host(host, official)
+        for alias, official in _BRAND_ALIASES
+    ))
 
 
 def compute_features(url: str, tld_lookup: dict, char_lookup: dict) -> dict:
     """
-    Pure function: compute the 20 URL features for a raw URL string
+    Pure function: compute the 22 URL features for a raw URL string
     using explicit lookup tables. Called by BOTH the training script
     and the inference path so the model sees identical feature values
     in both phases.
@@ -123,6 +213,8 @@ def compute_features(url: str, tld_lookup: dict, char_lookup: dict) -> dict:
         "NoOfOtherSpecialCharsInURL": len(other_specials),
         "SpacialCharRatioInURL": round(len(other_specials) / max(url_len, 1), 3),
         "IsHTTPS": int(parsed.scheme == "https"),
+        "NoOfSuspiciousWords": suspicious_word_count(raw),
+        "HasBrandOutsideDomain": brand_outside_domain(raw, host),
     }
 
 

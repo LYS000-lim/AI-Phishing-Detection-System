@@ -1,6 +1,15 @@
 const BLOCKED_LIST_PREVIEW_LIMIT = 10;
-const AUTH_LOGIN_URL = "http://localhost:8000/api/auth/login";
-const AUTH_ME_URL = "http://localhost:8000/api/auth/me";
+const AUTH_LOGIN_URL = "http://127.0.0.1:8000/api/auth/login";
+const USER_BLOCKS_SYNC_URL = "http://127.0.0.1:8000/api/extension/user-blocks/sync";
+const AUTH_ME_URL = "http://127.0.0.1:8000/api/auth/me";
+const MY_BLOCKED_URL = "http://127.0.0.1:8000/api/my-blocked-urls";
+
+// History + blocked-URL sections are only shown while signed in, so every
+// report/block made from them is tied to a known account.
+function showAccountSections(signedIn) {
+    document.getElementById("pg-account-only").style.display = signedIn ? "block" : "none";
+    document.getElementById("pg-signin-note").style.display = signedIn ? "none" : "block";
+}
 
 // ----------------------------------------------------------------
 // Website account sign-in — stores the JWT the same website login
@@ -33,6 +42,7 @@ async function refreshAccountStatus() {
     if (!store.pgAuthToken) {
         signedOutEl.style.display = "block";
         signedInEl.style.display = "none";
+        showAccountSections(false);
         return;
     }
 
@@ -54,6 +64,11 @@ async function refreshAccountStatus() {
         if (user.email !== store.pgAuthEmail) {
             await chrome.storage.session.set({ pgAuthEmail: user.email });
         }
+        showAccountSections(true);
+        // Upload any blocks made while signed out, then show the
+        // account's list (the same one the website shows).
+        await syncLocalBlocks(store.pgAuthToken);
+        await renderBlockedList(store.pgAuthToken);
     } catch (error) {
         // Token expired/invalid (or offline - we don't distinguish, since
         // either way the honest state right now is "not confirmed signed
@@ -63,6 +78,7 @@ async function refreshAccountStatus() {
         await chrome.storage.session.remove(["pgAuthToken", "pgAuthEmail"]);
         signedOutEl.style.display = "block";
         signedInEl.style.display = "none";
+        showAccountSections(false);
     }
 }
 
@@ -100,6 +116,23 @@ async function signIn() {
     }
 }
 
+// Upload URLs blocked while signed out, so the account's block list
+// (shown on the website) includes them. Failure is non-fatal.
+async function syncLocalBlocks(token) {
+    const store = await chrome.storage.local.get("userBlockedUrls");
+    const list = store.userBlockedUrls || [];
+    if (!list.length) return;
+    try {
+        await fetch(USER_BLOCKS_SYNC_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(list.map((e) => ({ url: e.url, time: e.time }))),
+        });
+    } catch (error) {
+        console.error("PhishGuard block sync failed:", error);
+    }
+}
+
 async function signOut() {
     await chrome.storage.session.remove(["pgAuthToken", "pgAuthEmail"]);
     await refreshAccountStatus();
@@ -128,15 +161,29 @@ async function setHistoryRecording(enabled) {
     await refreshStatus();
 }
 
-async function renderBlockedList() {
-    const store = await chrome.storage.local.get("userBlockedUrls");
-    const list = (store.userBlockedUrls || []).slice().sort((a, b) => b.time - a.time);
+async function renderBlockedList(token) {
+    let list = null;
+    if (token) {
+        try {
+            const res = await fetch(MY_BLOCKED_URL, { headers: { Authorization: `Bearer ${token}` } });
+            if (res.ok) {
+                // created_at is naive UTC from the server.
+                list = (await res.json()).map((b) => ({ url: b.url, time: Date.parse(`${b.created_at}Z`) }));
+            }
+        } catch (error) {
+            console.error("PhishGuard: could not load account block list", error);
+        }
+    }
+    if (!list) {
+        const store = await chrome.storage.local.get("userBlockedUrls");
+        list = (store.userBlockedUrls || []).slice().sort((a, b) => b.time - a.time);
+    }
     const container = document.getElementById("pg-blocked-list");
     const viewAllRow = document.getElementById("pg-view-all-row");
 
     if (!list.length) {
         container.className = "pg-empty";
-        container.textContent = "No locally blocked URLs.";
+        container.textContent = "No blocked URLs.";
         viewAllRow.style.display = "none";
         return;
     }
@@ -161,5 +208,4 @@ document.getElementById("pg-enable-history").addEventListener("click", () => set
 document.getElementById("pg-disable-history").addEventListener("click", () => setHistoryRecording(false));
 
 refreshStatus();
-renderBlockedList();
 refreshAccountStatus();

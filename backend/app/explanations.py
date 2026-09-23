@@ -1,5 +1,11 @@
 from typing import Iterable
 
+import numpy as np
+
+from .features import FEATURE_ORDER
+
+_IS_HTTPS_IDX = FEATURE_ORDER.index("IsHTTPS")
+
 
 # Base labels used in the redesigned result interface.
 # A few labels (for example URLCharProb) are made prediction-aware by
@@ -25,6 +31,8 @@ FEATURE_TITLES = {
     "NoOfOtherSpecialCharsInURL": "Special Characters",
     "SpacialCharRatioInURL": "Special Character Ratio",
     "IsHTTPS": "HTTPS Usage",
+    "NoOfSuspiciousWords": "Suspicious Words",
+    "HasBrandOutsideDomain": "Brand Name Misuse",
 }
 
 
@@ -50,6 +58,8 @@ FRIENDLY_NAMES = {
     "NoOfOtherSpecialCharsInURL": "special characters",
     "SpacialCharRatioInURL": "special-character ratio",
     "IsHTTPS": "HTTPS usage",
+    "NoOfSuspiciousWords": "suspicious words",
+    "HasBrandOutsideDomain": "brand name misuse",
 }
 
 
@@ -60,6 +70,67 @@ def risk_level(phishing_probability: float) -> str:
     if phishing_probability < 0.80:
         return "Medium"
     return "High"
+
+
+def is_https_only_verdict(vec: np.ndarray, model, threshold: float = 0.5) -> bool:
+    """
+    True when a "phishing" verdict is driven entirely by the missing-HTTPS
+    signal: re-run the model on a counterfactual copy of `vec` with IsHTTPS
+    flipped to 1 (same URL, imagined served over HTTPS) and check whether
+    that alone flips the verdict to legitimate.
+
+    IsHTTPS is the single most dominant feature (~36% importance) in this
+    model, so a genuinely legitimate but plain-http:// site (informational
+    pages, older institutional sites, some .gov pages) can get a confident
+    "phishing" verdict on that basis alone. Rather than silently trusting or
+    silently accusing, callers use this to downgrade the displayed verdict
+    to a neutral "Unable to Verify" state instead of a hard phishing
+    accusation -- while the raw model label/probability are still stored
+    unchanged for accuracy reporting and audit purposes.
+    """
+    counterfactual = vec.copy()
+    counterfactual[0, _IS_HTTPS_IDX] = 1
+    return float(model.predict_proba(counterfactual)[0][1]) < threshold
+
+
+def classify(vec: np.ndarray, features: dict, model, phish_threshold: float = 0.5,
+             uncertain_threshold: float = 0.5) -> dict:
+    """
+    Single source of truth for turning the model's P(phishing) into the
+    verdict shown to users (website scanner, XAI explain, extension).
+
+    - p >= phish_threshold                  -> "phishing"
+        ...unless the call is driven only by missing HTTPS (see
+        is_https_only_verdict)             -> "uncertain" (reason "https_only")
+    - uncertain_threshold <= p < phish_thr  -> "uncertain" (reason "borderline")
+    - p < uncertain_threshold               -> "legitimate"
+
+    The thresholds are tuned on a validation split during training (see
+    notebooks/Model_Comparison_DT_RF.ipynb) instead of the default 0.5, so
+    a hard "phishing" accusation needs a genuinely high score. `label`
+    stays the model's raw 0.5 decision, so dashboard/aggregate statistics
+    keep reporting true model behaviour.
+    """
+    proba = model.predict_proba(vec)[0]
+    p = float(proba[1])
+    result = {
+        "label": int(p >= 0.5),
+        "p_phish": p,
+        "confidence": float(max(proba)),
+        "prediction": "legitimate",
+        "risk": "Low",
+        "uncertain_reason": None,
+    }
+    if p >= phish_threshold:
+        # Soften only if HTTPS alone would make the URL look clean (< uncertain
+        # threshold), matching the original behaviour of this check.
+        if features.get("IsHTTPS") == 0 and is_https_only_verdict(vec, model, uncertain_threshold):
+            result.update(prediction="uncertain", risk="Medium", uncertain_reason="https_only")
+        else:
+            result.update(prediction="phishing", risk=risk_level(p) if p >= 0.5 else "Medium")
+    elif p >= uncertain_threshold:
+        result.update(prediction="uncertain", risk="Medium", uncertain_reason="borderline")
+    return result
 
 
 def _feature_title(feature: str, prediction: str) -> str:
@@ -206,6 +277,21 @@ def _feature_found(feature: str, prediction: str, value) -> str:
     if feature == "ObfuscationRatio":
         return f"About {_pct(value)} of this URL uses encoding tricks."
 
+    if feature == "NoOfSuspiciousWords":
+        n = int(float(value or 0))
+        return (
+            "No login, account or payment wording was found in this URL." if n == 0
+            else f"This URL contains {n} login/account/payment-related word(s) "
+            "(such as 'login', 'verify', 'account', 'bank')."
+        )
+
+    if feature == "HasBrandOutsideDomain":
+        return (
+            "A well-known brand name appears in this URL, but the website is "
+            "not that brand's official domain." if int(value or 0) == 1
+            else "No well-known brand name is used outside its official website."
+        )
+
     # Generic fallback for any remaining feature without a dedicated observation.
     return f"The detected value for this characteristic is {_number(value)}."
 
@@ -331,6 +417,21 @@ def _feature_why_matters(feature: str, prediction: str) -> str:
             "link."
         )
 
+    if feature == "NoOfSuspiciousWords":
+        return (
+            "Phishing links often add words like 'login', 'verify' or "
+            "'account' to make a fake page look official and urgent." if p else
+            "Addresses without urgent account or payment wording are typical "
+            "of ordinary web pages."
+        )
+
+    if feature == "HasBrandOutsideDomain":
+        return (
+            "Attackers put a trusted brand's name in the path or subdomain "
+            "(e.g. site.com/paypal/login) to impersonate it." if p else
+            "The address does not borrow another company's brand name."
+        )
+
     # Generic fallback for any remaining feature without a dedicated reason.
     return (
         "This pattern is one of several the model weighs together, learned "
@@ -363,6 +464,8 @@ FEATURE_CLAUSES = {
     "SpacialCharRatioInURL": ("a high share of special symbols", "a normal, low share of special symbols"),
     "NoOfObfuscatedChar": ("encoded/obfuscated characters", "no encoded characters"),
     "ObfuscationRatio": ("a high proportion of obfuscated characters", "little to no obfuscation"),
+    "NoOfSuspiciousWords": ("account/login/payment wording in the address", "no account or payment wording"),
+    "HasBrandOutsideDomain": ("a brand name used outside its official website", "no misused brand names"),
 }
 
 

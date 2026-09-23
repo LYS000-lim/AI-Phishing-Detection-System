@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { utcDate } from '../../dates.js'
+import DateRangeFilter from '../DateRangeFilter.jsx'
 import { adminDeleteDetection, adminDetections, explainURL, exportDetections } from '../../api.js'
 
 const ATTACK_TYPES = [
@@ -12,7 +14,6 @@ const ATTACK_TYPES = [
 const SOURCE_LABELS = {
   website: '🌐 Website Scanner',
   extension: '🧩 Chrome Extension',
-  admin: '🛡 Admin Scanner',
 }
 
 const ATTACK_TYPE_INFO = {
@@ -35,6 +36,7 @@ export default function AdminDetectionLogs() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [source, setSource] = useState('')
+  const [datesValid, setDatesValid] = useState(true)
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -131,6 +133,7 @@ export default function AdminDetectionLogs() {
             >
               <option value="">All results</option>
               <option value="phishing">Phishing only</option>
+              <option value="uncertain">Suspicious only</option>
               <option value="legitimate">Legitimate only</option>
             </select>
             <select
@@ -159,18 +162,17 @@ export default function AdminDetectionLogs() {
               <option value="">All sources</option>
               <option value="website">Website Scanner</option>
               <option value="extension">Chrome Extension</option>
-              <option value="admin">Admin Scanner</option>
             </select>
-            <label className="date-filter">
-              From
-              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-            </label>
-            <label className="date-filter">
-              To
-              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-            </label>
+            <DateRangeFilter
+              from={dateFrom}
+              to={dateTo}
+              allowEmpty
+              onChange={(f, t) => { setDateFrom(f); setDateTo(t) }}
+              onValidityChange={setDatesValid}
+            />
             <button
               className="scan-btn small"
+              disabled={!datesValid}
               onClick={() => {
                 setPage(1)
                 load()
@@ -178,10 +180,10 @@ export default function AdminDetectionLogs() {
             >
               Apply
             </button>
-            <button className="scan-btn small secondary" disabled={exporting} onClick={() => download('csv')}>
+            <button className="scan-btn small secondary" disabled={exporting || !datesValid} onClick={() => download('csv')}>
               Download CSV
             </button>
-            <button className="scan-btn small secondary" disabled={exporting} onClick={() => download('pdf')}>
+            <button className="scan-btn small secondary" disabled={exporting || !datesValid} onClick={() => download('pdf')}>
               Download PDF
             </button>
           </div>
@@ -223,7 +225,7 @@ export default function AdminDetectionLogs() {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td>{new Date(r.created_at).toLocaleString()}</td>
+                    <td>{utcDate(r.created_at).toLocaleString('en-GB')}</td>
 
                     <td>
                       <div>{r.user_name}</div>
@@ -235,8 +237,8 @@ export default function AdminDetectionLogs() {
                     <td>{SOURCE_LABELS[r.source] || r.source}</td>
 
                     <td>
-                      <span className={`badge ${r.prediction === 'phishing' ? 'phish' : 'legit'}`}>
-                        {r.prediction}
+                      <span className={`badge ${r.prediction === 'phishing' ? 'phish' : r.prediction === 'uncertain' ? 'review' : 'legit'}`}>
+                        {r.prediction === 'uncertain' ? 'suspicious' : r.prediction}
                       </span>
                     </td>
 
@@ -313,7 +315,7 @@ export default function AdminDetectionLogs() {
               <dt>URL</dt><dd className="mono">{detail.url}</dd>
               <dt>User</dt><dd>{detail.user_name} ({detail.user_email})</dd>
               <dt>Source</dt><dd>{SOURCE_LABELS[detail.source] || detail.source}</dd>
-              <dt>Verdict</dt><dd>{detail.prediction}</dd>
+              <dt>Verdict</dt><dd>{detail.prediction === 'uncertain' ? 'suspicious' : detail.prediction}</dd>
               <dt>Risk Level</dt><dd>{detail.risk_level}</dd>
               <dt>Attack Type</dt><dd>{detail.attack_type || '-'}</dd>
               <dt>Confidence</dt><dd>{(detail.confidence * 100).toFixed(2)}%</dd>
@@ -321,7 +323,7 @@ export default function AdminDetectionLogs() {
               <dd>{(detail.phishing_probability * 100).toFixed(2)}%</dd>
               <dt>Model</dt><dd className="mono">{detail.model_used}</dd>
               <dt>IP</dt><dd className="mono">{detail.ip_address || '-'}</dd>
-              <dt>Time</dt><dd>{new Date(detail.created_at).toLocaleString()}</dd>
+              <dt>Time</dt><dd>{utcDate(detail.created_at).toLocaleString('en-GB')}</dd>
             </dl>
 
             {detail.attack_type && ATTACK_TYPE_INFO[detail.attack_type] && (

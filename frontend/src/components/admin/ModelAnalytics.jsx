@@ -27,13 +27,13 @@ function ConfusionMatrix({ cm, title }) {
         <tbody>
           <tr>
             <th>Actual Legit</th>
-            <td className="cm-good">{tn.toLocaleString()}</td>
-            <td className="cm-bad">{fp.toLocaleString()}</td>
+            <td className="cm-good">{tn.toLocaleString('en-GB')}</td>
+            <td className="cm-bad">{fp.toLocaleString('en-GB')}</td>
           </tr>
           <tr>
             <th>Actual Phish</th>
-            <td className="cm-bad">{fn.toLocaleString()}</td>
-            <td className="cm-good">{tp.toLocaleString()}</td>
+            <td className="cm-bad">{fn.toLocaleString('en-GB')}</td>
+            <td className="cm-good">{tp.toLocaleString('en-GB')}</td>
           </tr>
         </tbody>
       </table>

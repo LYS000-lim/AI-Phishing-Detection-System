@@ -1,17 +1,17 @@
-from typing import Optional
+from datetime import datetime, timezone
+from typing import List, Optional
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from .allowlist import is_trusted, matched_domain
-from .auth import try_current_user
+from .auth import current_user, try_current_user
 from .database import get_db
 from .features import extract_features, feature_vector
-from .explanations import risk_level
-from .ml_state import MODEL, model_info
+from .ml_state import MODEL, classify_vec, model_info
 from .phishing_type import detect_phishing_type
-from .models import BlockedURL, Detection, ExtensionReport, User
+from .models import BlockedURL, Detection, ExtensionReport, User, UserBlockedURL
 from .schemas import ExtensionReportCreate, ExtensionReportOut
 
 
@@ -85,25 +85,17 @@ def extension_scan(
     try:
         vec = feature_vector(url)
 
-        label = int(MODEL.predict(vec)[0])
-
-        probability = MODEL.predict_proba(vec)[0]
-
-        phishing_probability = float(probability[1])
-
-        confidence = float(max(probability))
-
-        prediction = (
-            "phishing"
-            if label == 1
-            else "legitimate"
-        )
-
-        risk = risk_level(
-            phishing_probability
-        )
-
         features = extract_features(url)
+
+        # Same tuned thresholds + missing-HTTPS softening as the website
+        # scanner (explanations.classify).
+        verdict = classify_vec(vec, features, url)
+        label = verdict["label"]
+        phishing_probability = verdict["p_phish"]
+        confidence = verdict["confidence"]
+        prediction = verdict["prediction"]
+        risk = verdict["risk"]
+        uncertain_reason = verdict["uncertain_reason"]
 
         attack_type = None
 
@@ -133,12 +125,14 @@ def extension_scan(
                 4,
             ),
             "legitimate_probability": round(
-                float(probability[0]),
+                1 - phishing_probability,
                 4,
             ),
             "risk_level": risk,
             "model_used": model_info()["name"],
             "trusted_domain": False,
+            "uncertain_reason": uncertain_reason,
+            "reputation": verdict["reputation"],
             "attack_type": attack_type,
         }
 
@@ -168,17 +162,34 @@ def _hostname(url: str) -> str:
 def check_blacklist(
     url: str,
     db: Session = Depends(get_db),
+    user: Optional[User] = Depends(try_current_user),
 ):
     """
-    Anonymous blacklist lookup used by the extension before/instead of
-    running the ML model, so admin-confirmed phishing domains are blocked
-    immediately on every future visit.
+    Blacklist lookup used by the extension before/instead of running the
+    ML model, so admin-confirmed phishing domains are blocked immediately
+    on every future visit. When the extension is signed in, the user's own
+    "Block URL" list (saved to their account) is checked too.
     """
 
     domain = _hostname(url)
 
     if not domain:
         return {"blocked": False}
+
+    if user is not None:
+        own = (
+            db.query(UserBlockedURL)
+            .filter(UserBlockedURL.user_id == user.id, UserBlockedURL.hostname == domain)
+            .first()
+        )
+        if own:
+            return {
+                "blocked": True,
+                "by_user": True,
+                "domain": domain,
+                "risk_level": "High",
+                "reason": "You previously chose to block this website.",
+            }
 
     entry = (
         db.query(BlockedURL)
@@ -198,6 +209,67 @@ def check_blacklist(
 
 
 # ==========================================================
+# User "Block URL" list (signed-in extension only)
+# ==========================================================
+
+def _save_user_block(db: Session, user: User, url: str, attack_type: Optional[str],
+                     blocked_at: Optional[datetime] = None) -> bool:
+    host = _hostname(url)
+    if not host:
+        return False
+    exists = (
+        db.query(UserBlockedURL)
+        .filter(UserBlockedURL.user_id == user.id, UserBlockedURL.hostname == host)
+        .first()
+    )
+    if exists:
+        return False
+    row = UserBlockedURL(user_id=user.id, url=url, hostname=host, attack_type=attack_type)
+    if blocked_at is not None:
+        row.created_at = blocked_at
+    db.add(row)
+    return True
+
+
+@router.post("/user-blocks")
+def add_user_block(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Save one "Block URL" click from the warning page to the account."""
+    url = (payload.get("url") or "").strip()
+    if not url:
+        raise HTTPException(400, "URL is required")
+    added = _save_user_block(db, user, url, payload.get("attack_type"))
+    db.commit()
+    return {"saved": added}
+
+
+@router.post("/user-blocks/sync")
+def sync_user_blocks(
+    payload: List[dict] = Body(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Upload blocks made while the extension was signed out, so the
+    account list is complete after the user signs in."""
+    added = 0
+    for entry in payload[:500]:
+        url = (entry.get("url") or "").strip()
+        # "time" = when the block happened (ms since epoch), so the account
+        # list shows the real block date rather than the sync date.
+        blocked_at = None
+        if isinstance(entry.get("time"), (int, float)):
+            blocked_at = datetime.fromtimestamp(entry["time"] / 1000, timezone.utc).replace(tzinfo=None)
+        if url and _save_user_block(db, user, url, None, blocked_at):
+            added += 1
+            db.flush()
+    db.commit()
+    return {"added": added}
+
+
+# ==========================================================
 # Anonymous Extension Report
 # ==========================================================
 
@@ -209,6 +281,7 @@ def extension_report(
     payload: ExtensionReportCreate,
     request: Request,
     db: Session = Depends(get_db),
+    user: Optional[User] = Depends(try_current_user),
 ):
 
     existing = (
@@ -245,6 +318,8 @@ def extension_report(
         ),
 
         status="pending",
+
+        user_id=user.id if user else None,
     )
 
 

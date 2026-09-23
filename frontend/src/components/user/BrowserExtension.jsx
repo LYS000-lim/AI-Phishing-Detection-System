@@ -1,13 +1,53 @@
 import { useEffect, useState } from 'react'
+import { utcDate } from '../../dates.js'
 import { explainURL, myDetections } from '../../api.js'
+import DateRangeFilter from '../DateRangeFilter.jsx'
+
+// Pings the content script every installed/enabled extension injects on
+// this page (toast.js, document_start) and waits briefly for its reply.
+// window.postMessage is the only channel a webpage has to an extension
+// without the extension explicitly opting in via externally_connectable -
+// there's no API for a page to ask Chrome "is extension X on?" directly,
+// so presence is inferred from getting a reply at all.
+function usePhishGuardExtensionStatus() {
+  const [status, setStatus] = useState('checking') // 'checking' | 'active' | 'not-detected'
+  const [version, setVersion] = useState(null)
+
+  useEffect(() => {
+    let settled = false
+    const onMessage = (event) => {
+      if (event.source !== window || event.data?.type !== 'PHISHGUARD_EXTENSION_PONG') return
+      settled = true
+      setVersion(event.data.version || null)
+      setStatus('active')
+    }
+    window.addEventListener('message', onMessage)
+    window.postMessage({ type: 'PHISHGUARD_EXTENSION_PING' }, '*')
+
+    const timeout = setTimeout(() => {
+      if (!settled) setStatus('not-detected')
+    }, 600)
+
+    return () => {
+      window.removeEventListener('message', onMessage)
+      clearTimeout(timeout)
+    }
+  }, [])
+
+  return { status, version }
+}
 
 export default function BrowserExtension() {
+  const extensionStatus = usePhishGuardExtensionStatus()
   const [rows, setRows] = useState([])
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const pageSize = 10
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [datesValid, setDatesValid] = useState(true)
 
   const [detail, setDetail] = useState(null)
   const [xai, setXai] = useState(null)
@@ -17,7 +57,7 @@ export default function BrowserExtension() {
   const load = () => {
     setLoading(true)
     setError('')
-    myDetections('', '', page, pageSize, '', '', '', '', 'extension')
+    myDetections('', '', page, pageSize, '', '', dateFrom, dateTo, 'extension')
       .then((data) => {
         setRows(data.items)
         setTotal(data.total)
@@ -60,6 +100,30 @@ export default function BrowserExtension() {
           protection while you browse.
         </p>
       </div>
+
+      <section className="panel panel-compact">
+        <h3>Extension Status</h3>
+        {extensionStatus.status === 'checking' && (
+          <p className="xai-note" style={{ margin: 0 }}>Checking…</p>
+        )}
+        {extensionStatus.status === 'active' && (
+          <p style={{ margin: 0 }}>
+            <span className="badge legit">● ON</span>
+            {extensionStatus.version && (
+              <span className="xai-note" style={{ marginLeft: 10 }}>v{extensionStatus.version} detected on this page</span>
+            )}
+          </p>
+        )}
+        {extensionStatus.status === 'not-detected' && (
+          <>
+            <p style={{ margin: 0 }}><span className="badge phish">● OFF / NOT INSTALLED</span></p>
+            <p className="xai-note" style={{ marginTop: 8, marginBottom: 0 }}>
+              No browser lets a website turn an extension on or off directly (a Chrome security
+              boundary, not a PhishGuard limitation) — enable it yourself at <span className="mono">chrome://extensions</span>.
+            </p>
+          </>
+        )}
+      </section>
 
       <section className="panel panel-compact">
         <h3>What it does</h3>
@@ -107,6 +171,18 @@ export default function BrowserExtension() {
 
       <section className="panel">
         <h3>Detection Records</h3>
+        <div className="filters" style={{ flexWrap: 'wrap', marginBottom: 14 }}>
+          <DateRangeFilter
+            from={dateFrom}
+            to={dateTo}
+            allowEmpty
+            onChange={(f, t) => { setDateFrom(f); setDateTo(t) }}
+            onValidityChange={setDatesValid}
+          />
+          <button className="scan-btn small" disabled={!datesValid} onClick={() => { setPage(1); load() }}>
+            Apply
+          </button>
+        </div>
         {loading ? (
           <p className="empty">Loading…</p>
         ) : rows.length === 0 ? (
@@ -123,10 +199,10 @@ export default function BrowserExtension() {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td>{new Date(r.created_at).toLocaleString()}</td>
+                    <td>{utcDate(r.created_at).toLocaleString('en-GB')}</td>
                     <td className="mono ellip">{r.url}</td>
                     <td>
-                      <span className={`badge ${r.prediction === 'phishing' ? 'phish' : 'legit'}`}>{r.prediction}</span>
+                      <span className={`badge ${r.prediction === 'phishing' ? 'phish' : r.prediction === 'uncertain' ? 'review' : 'legit'}`}>{r.prediction === 'uncertain' ? 'suspicious' : r.prediction}</span>
                     </td>
                     <td>
                       <span className={`risk-pill risk-${r.risk_level.toLowerCase()}`}>{r.risk_level}</span>
@@ -152,12 +228,12 @@ export default function BrowserExtension() {
             <h3>Detection #{detail.id}</h3>
             <dl className="details">
               <dt>URL</dt><dd className="mono">{detail.url}</dd>
-              <dt>Verdict</dt><dd>{detail.prediction}</dd>
+              <dt>Verdict</dt><dd>{detail.prediction === 'uncertain' ? 'suspicious' : detail.prediction}</dd>
               <dt>Risk Level</dt><dd>{detail.risk_level}</dd>
               <dt>Attack Type</dt><dd>{detail.attack_type || '-'}</dd>
               <dt>Confidence</dt><dd>{(detail.confidence * 100).toFixed(2)}%</dd>
               <dt>Model</dt><dd className="mono">{detail.model_used}</dd>
-              <dt>Time</dt><dd>{new Date(detail.created_at).toLocaleString()}</dd>
+              <dt>Time</dt><dd>{utcDate(detail.created_at).toLocaleString('en-GB')}</dd>
             </dl>
 
             {!xai && !xaiLoading && (

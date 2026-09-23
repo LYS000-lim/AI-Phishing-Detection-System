@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { utcDate } from '../../dates.js'
 import { adminDetections, adminExtensionMonitoring } from '../../api.js'
 
 export default function AdminExtensionMonitoring() {
@@ -62,13 +63,13 @@ export default function AdminExtensionMonitoring() {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td>{new Date(r.created_at).toLocaleString()}</td>
+                    <td>{utcDate(r.created_at).toLocaleString('en-GB')}</td>
                     <td>
                       <div>{r.user_name}</div>
                       <div className="mono muted">{r.user_email}</div>
                     </td>
                     <td className="mono ellip">{r.url}</td>
-                    <td><span className={`badge ${r.prediction === 'phishing' ? 'phish' : 'legit'}`}>{r.prediction}</span></td>
+                    <td><span className={`badge ${r.prediction === 'phishing' ? 'phish' : r.prediction === 'uncertain' ? 'review' : 'legit'}`}>{r.prediction === 'uncertain' ? 'suspicious' : r.prediction}</span></td>
                     <td><span className={`risk-pill risk-${r.risk_level.toLowerCase()}`}>{r.risk_level}</span></td>
                   </tr>
                 ))}

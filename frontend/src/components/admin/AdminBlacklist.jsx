@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { utcDate } from '../../dates.js'
+import DateRangeFilter from '../DateRangeFilter.jsx'
 import { adminReportedURLs, exportBlacklistPDF, approveExtensionReport, rejectExtensionReport } from '../../api.js'
 
 // A "Reason" column full of paragraph-length text is unreadable in a table;
@@ -17,6 +19,9 @@ export default function AdminBlacklist() {
   const pageSize = 20
 
   const [q,setQ] = useState('')
+  const [dateFrom,setDateFrom] = useState('')
+  const [dateTo,setDateTo] = useState('')
+  const [datesValid,setDatesValid] = useState(true)
   const [loading,setLoading] = useState(true)
   const [error,setError] = useState('')
   const [stats,setStats] = useState(null)
@@ -26,7 +31,7 @@ export default function AdminBlacklist() {
   const load = () => {
     setLoading(true)
 
-    adminReportedURLs(q,page,pageSize)
+    adminReportedURLs(q,page,pageSize,dateFrom,dateTo)
       .then((data)=>{
         setRows(data.items)
         setTotal(data.total)
@@ -44,7 +49,7 @@ export default function AdminBlacklist() {
 
   const downloadPDF = async()=>{
     try{
-      await exportBlacklistPDF()
+      await exportBlacklistPDF(dateFrom,dateTo)
     }catch(e){
       setError(e.message)
     }
@@ -73,6 +78,8 @@ export default function AdminBlacklist() {
 
       await rejectExtensionReport(id)
 
+      // Drop the row immediately; load() then refreshes totals/stats.
+      setRows((prev)=>prev.filter((r)=>!(r.source === "Chrome Extension" && r.id === id)))
       load()
 
     }catch(e){
@@ -113,15 +120,24 @@ export default function AdminBlacklist() {
 
       <section className="panel">
 
-        <div className="filters">
+        <div className="filters" style={{ flexWrap: 'wrap' }}>
 
-          <input className="scan-input" placeholder="Search URL..." value={q} onChange={(e)=>setQ(e.target.value)} />
+          <input className="scan-input" placeholder="Search URL..." value={q} onChange={(e)=>setQ(e.target.value)}
+            onKeyDown={(e)=>{ if (e.key === 'Enter' && datesValid) { setPage(1); load() } }} />
 
-          <button className="scan-btn small" onClick={()=>{setPage(1);load()}}>
-            Search
+          <DateRangeFilter
+            from={dateFrom}
+            to={dateTo}
+            allowEmpty
+            onChange={(f, t) => { setDateFrom(f); setDateTo(t) }}
+            onValidityChange={setDatesValid}
+          />
+
+          <button className="scan-btn small" disabled={!datesValid} onClick={()=>{setPage(1);load()}}>
+            Apply
           </button>
 
-          <button className="scan-btn" onClick={downloadPDF}>
+          <button className="scan-btn small secondary" disabled={!datesValid} onClick={downloadPDF}>
             Download PDF
           </button>
 
@@ -202,7 +218,7 @@ export default function AdminBlacklist() {
 
 
                 <td>
-                  {new Date(r.created_at).toLocaleString()}
+                  {utcDate(r.created_at).toLocaleString('en-GB')}
                 </td>
 
 

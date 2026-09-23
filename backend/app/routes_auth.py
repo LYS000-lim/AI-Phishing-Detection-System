@@ -1,5 +1,5 @@
 import hashlib
-import os
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -8,19 +8,21 @@ from sqlalchemy.orm import Session
 
 from .auth import create_access_token, current_user, hash_password, verify_password
 from .database import get_db
-from .email_utils import send_password_reset_email
+from .email_utils import send_password_reset_code
 from .models import PasswordResetToken, User
 from .schemas import (
     ForgotPasswordRequest, LoginRequest, RegisterRequest, RegisterResponse,
     ResetPasswordRequest, TokenResponse, UserOut,
 )
 
-RESET_TOKEN_TTL_MINUTES = 30
-FRONTEND_URL = os.environ.get("PHISHGUARD_FRONTEND_URL", "http://localhost:5173")
+RESET_CODE_TTL_MINUTES = 10
+MAX_CODE_ATTEMPTS = 5
 
 
-def _hash_reset_token(raw: str) -> str:
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+def _hash_reset_code(user_id: int, code: str) -> str:
+    # Salted with the user id so two users' identical codes never collide
+    # on the unique token_hash column.
+    return hashlib.sha256(f"{user_id}:{code}".encode("utf-8")).hexdigest()
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -98,54 +100,72 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     # Always return the same generic message, whether or not the email is
     # registered, so this endpoint can't be used to enumerate accounts.
     generic_response = {
-        "message": "If that email is registered, a password reset link has been sent.",
+        "message": "If that email is registered, a verification code has been sent.",
     }
 
     user = db.query(User).filter(User.email == payload.email.lower()).first()
     if not user or not user.is_active:
         return generic_response
 
-    raw_token = secrets.token_urlsafe(32)
-    reset_row = PasswordResetToken(
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    # Requesting a new code invalidates any earlier unused one.
+    db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user.id,
+        PasswordResetToken.used_at.is_(None),
+    ).update({PasswordResetToken.used_at: now})
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    db.add(PasswordResetToken(
         user_id=user.id,
-        token_hash=_hash_reset_token(raw_token),
-        expires_at=datetime.now(timezone.utc).replace(tzinfo=None)
-        + timedelta(minutes=RESET_TOKEN_TTL_MINUTES),
-    )
-    db.add(reset_row)
+        token_hash=_hash_reset_code(user.id, code),
+        expires_at=now + timedelta(minutes=RESET_CODE_TTL_MINUTES),
+    ))
     db.commit()
 
-    reset_link = f"{FRONTEND_URL}/reset-password?token={raw_token}"
-    send_password_reset_email(user.email, reset_link)
-
+    send_password_reset_code(user.email, code, RESET_CODE_TTL_MINUTES)
     return generic_response
 
 
 @router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
 def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
-    token_hash = _hash_reset_token(payload.token)
+    invalid = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="This code is invalid or has expired. Please request a new one.",
+    )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    user = db.query(User).filter(User.email == payload.email.lower()).first()
+    if not user or not user.is_active:
+        raise invalid
 
     reset_row = (
         db.query(PasswordResetToken)
         .filter(
-            PasswordResetToken.token_hash == token_hash,
+            PasswordResetToken.user_id == user.id,
             PasswordResetToken.used_at.is_(None),
             PasswordResetToken.expires_at > now,
         )
+        .order_by(PasswordResetToken.created_at.desc())
         .first()
     )
     if not reset_row:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This reset link is invalid or has expired. Please request a new one.",
-        )
+        raise invalid
 
-    user = db.query(User).filter(User.id == reset_row.user_id).first()
-    if not user or not user.is_active:
+    if not hmac.compare_digest(reset_row.token_hash, _hash_reset_code(user.id, payload.code)):
+        # Limit guesses: a 6-digit code is only safe with an attempt cap.
+        reset_row.attempts = (reset_row.attempts or 0) + 1
+        if reset_row.attempts >= MAX_CODE_ATTEMPTS:
+            reset_row.used_at = now
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Too many incorrect attempts. Please request a new code.",
+            )
+        db.commit()
+        left = MAX_CODE_ATTEMPTS - reset_row.attempts
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This reset link is invalid or has expired. Please request a new one.",
+            detail=f"Incorrect code. {left} attempt{'s' if left != 1 else ''} left.",
         )
 
     user.password_hash = hash_password(payload.new_password)

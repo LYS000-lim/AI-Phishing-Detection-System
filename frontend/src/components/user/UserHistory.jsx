@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { utcDate } from '../../dates.js'
+import DateRangeFilter from '../DateRangeFilter.jsx'
 import { myDetections, myReports } from '../../api.js'
 
 // A "Reason" column full of paragraph-length text is unreadable in a table;
@@ -17,6 +19,7 @@ export default function UserHistory() {
   const [risk, setRisk] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [datesValid, setDatesValid] = useState(true)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const pageSize = 20
@@ -69,6 +72,7 @@ export default function UserHistory() {
           <select className="scan-input" value={result} onChange={(e) => { setPage(1); setResult(e.target.value) }}>
             <option value="">All results</option>
             <option value="phishing">Phishing only</option>
+            <option value="uncertain">Suspicious only</option>
             <option value="legitimate">Legitimate only</option>
           </select>
           <select className="scan-input" value={risk} onChange={(e) => { setPage(1); setRisk(e.target.value) }}>
@@ -77,15 +81,14 @@ export default function UserHistory() {
             <option value="Medium">Medium</option>
             <option value="Low">Low</option>
           </select>
-          <label className="date-filter">
-            From
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          </label>
-          <label className="date-filter">
-            To
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-          </label>
-          <button className="scan-btn small" onClick={() => { setPage(1); loadHistory() }}>Apply</button>
+          <DateRangeFilter
+            from={dateFrom}
+            to={dateTo}
+            allowEmpty
+            onChange={(f, t) => { setDateFrom(f); setDateTo(t) }}
+            onValidityChange={setDatesValid}
+          />
+          <button className="scan-btn small" disabled={!datesValid} onClick={() => { setPage(1); loadHistory() }}>Apply</button>
         </div>
 
         {loadingHist ? (
@@ -108,11 +111,11 @@ export default function UserHistory() {
               <tbody>
                 {history.map((h) => (
                   <tr key={h.id}>
-                    <td>{new Date(h.created_at).toLocaleString()}</td>
+                    <td>{utcDate(h.created_at).toLocaleString('en-GB')}</td>
                     <td className="mono ellip">{h.url}</td>
                     <td>
-                      <span className={`badge ${h.prediction === 'phishing' ? 'phish' : 'legit'}`}>
-                        {h.prediction}
+                      <span className={`badge ${h.prediction === 'phishing' ? 'phish' : h.prediction === 'uncertain' ? 'review' : 'legit'}`}>
+                        {h.prediction === 'uncertain' ? 'suspicious' : h.prediction}
                       </span>
                     </td>
                     <td>
@@ -176,7 +179,7 @@ export default function UserHistory() {
                       </>
                     ) : '-'}
                   </td>
-                  <td>{new Date(r.created_at).toLocaleString()}</td>
+                  <td>{utcDate(r.created_at).toLocaleString('en-GB')}</td>
                 </tr>
               ))}
             </tbody>

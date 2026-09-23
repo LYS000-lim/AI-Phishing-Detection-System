@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import { utcDate } from '../../dates.js'
 import {
   adminCreateUser, adminDeleteUser, adminUpdateUser, adminUsers,
 } from '../../api.js'
 import { useAuth } from '../../AuthContext.jsx'
 import PasswordRequirements, { isPasswordValid } from '../PasswordRequirements.jsx'
+import PasswordMatch from '../PasswordMatch.jsx'
 
 const EMPTY_NEW_USER = {
   full_name: '', email: '', password: '', confirm: '', role: 'user',
@@ -165,7 +167,7 @@ export default function AdminUserManagement() {
                       {u.is_active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
-                  <td>{new Date(u.created_at).toLocaleDateString()}</td>
+                  <td>{utcDate(u.created_at).toLocaleDateString('en-GB')}</td>
                   <td>
                     <button className="link-btn" onClick={() => setEditing({ ...u })}>Edit</button>
                     <button className="link-btn" onClick={() => toggleActive(u)} disabled={u.id === me?.id}>
@@ -231,6 +233,7 @@ export default function AdminUserManagement() {
                 minLength={6}
                 required
               />
+              <PasswordMatch password={newUser.password} confirm={newUser.confirm} />
 
               <label className="auth-label">Role</label>
               <div className="role-row">
@@ -267,7 +270,7 @@ export default function AdminUserManagement() {
                 >
                   Cancel
                 </button>
-                <button type="submit" className="scan-btn" disabled={createBusy}>
+                <button type="submit" className="scan-btn" disabled={createBusy || (newUser.confirm && newUser.password !== newUser.confirm)}>
                   {createBusy ? 'Creating…' : 'Create account'}
                 </button>
               </div>

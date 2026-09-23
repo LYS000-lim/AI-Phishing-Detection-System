@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { adminDashboard } from '../../api.js'
-import DashboardVisuals from '../DashboardVisuals.jsx'
+import DashboardVisuals, { DashboardFilters } from '../DashboardVisuals.jsx'
+import { todayISO } from '../DateRangeFilter.jsx'
 
-const todayISO = () => new Date().toISOString().slice(0, 10)
 const daysAgoISO = (n) => {
   const d = new Date()
   d.setDate(d.getDate() - n)
-  return d.toISOString().slice(0, 10)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 export default function AdminDashboard() {
@@ -16,6 +16,7 @@ export default function AdminDashboard() {
   const [dateTo, setDateTo] = useState(todayISO())
   const [source, setSource] = useState('')
   const [loading, setLoading] = useState(false)
+  const visualsRef = useRef(null)
 
   const load = (from, to, s) => {
     setLoading(true)
@@ -46,10 +47,19 @@ export default function AdminDashboard() {
         <p className="tagline">System-wide monitoring across all users, the website scanner, and the Chrome extension.</p>
       </div>
 
+      <DashboardFilters
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        source={source}
+        onRangeChange={(f, t) => { setDateFrom(f); setDateTo(t) }}
+        onSourceChange={setSource}
+        onDownload={() => visualsRef.current?.downloadAll()}
+      />
+
       <section className="panel">
         <h3>System Overview</h3>
         <div className="tiles">
-          <div className="tile"><div className="v">{totals.users}</div><div className="k">Total Users</div></div>
+          <div className="tile"><div className="v">{totals.users}</div><div className="k">Active Users</div></div>
           <div className="tile"><div className="v">{totals.scans}</div><div className="k">Total Scans</div></div>
           <div className="tile"><div className="v" style={{ color: '#ef4444' }}>{totals.phishing}</div><div className="k">Phishing Detection</div></div>
           <div className="tile"><div className="v" style={{ color: '#10b981' }}>{totals.legitimate}</div><div className="k">Legitimate Detection</div></div>
@@ -74,14 +84,32 @@ export default function AdminDashboard() {
       </section>
 
       <DashboardVisuals
+        ref={visualsRef}
         visuals={visuals}
         dateFrom={dateFrom}
         dateTo={dateTo}
-        source={source}
-        onDateFromChange={setDateFrom}
-        onDateToChange={setDateTo}
-        onSourceChange={setSource}
         loading={loading}
+        summaryTiles={[
+          {
+            title: 'System Overview',
+            items: [
+              { label: 'Active Users', value: totals.users },
+              { label: 'Total Scans', value: totals.scans },
+              { label: 'Phishing Detection', value: totals.phishing },
+              { label: 'Legitimate Detection', value: totals.legitimate },
+              { label: 'Extension Detection', value: totals.extension_detections },
+            ],
+          },
+          {
+            title: 'Threat Intelligence',
+            items: [
+              { label: 'Most common attack type', value: most_common_attack_type || 'N/A' },
+              { label: 'Most targeted brand', value: most_targeted_brand || 'N/A' },
+              { label: 'Blocked URLs', value: blocked_urls_count },
+              { label: 'Pending reports', value: pending_reports_count },
+            ],
+          },
+        ]}
       />
 
       <section className="panel">

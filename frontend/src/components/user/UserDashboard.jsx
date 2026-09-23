@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { utcDate } from '../../dates.js'
 import { Link } from 'react-router-dom'
 import { detectionsDashboardVisuals, personalSummary } from '../../api.js'
 import { useAuth } from '../../AuthContext.jsx'
-import DashboardVisuals from '../DashboardVisuals.jsx'
+import DashboardVisuals, { DashboardFilters } from '../DashboardVisuals.jsx'
+import { todayISO } from '../DateRangeFilter.jsx'
 
 // Simple client-side label from the user's own phishing ratio — no backend
 // change needed, purely descriptive of scans run so far.
@@ -14,11 +16,10 @@ const protectionLevel = (total, phishing) => {
   return { label: 'Needs Attention', color: '#ef4444' }
 }
 
-const todayISO = () => new Date().toISOString().slice(0, 10)
 const daysAgoISO = (n) => {
   const d = new Date()
   d.setDate(d.getDate() - n)
-  return d.toISOString().slice(0, 10)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 export default function UserDashboard() {
@@ -31,6 +32,7 @@ export default function UserDashboard() {
   const [dateTo, setDateTo] = useState(todayISO())
   const [source, setSource] = useState('')
   const [loading, setLoading] = useState(false)
+  const visualsRef = useRef(null)
 
   useEffect(() => {
     personalSummary().then(setData).catch((e) => setError(e.message))
@@ -66,6 +68,15 @@ export default function UserDashboard() {
         <h2>Welcome back, {user?.full_name?.split(' ')[0]}</h2>
         <p className="tagline">Your personal detection summary and recent scans.</p>
       </div>
+
+      <DashboardFilters
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        source={source}
+        onRangeChange={(f, t) => { setDateFrom(f); setDateTo(t) }}
+        onSourceChange={setSource}
+        onDownload={() => visualsRef.current?.downloadAll()}
+      />
 
       <section className="panel">
         <h3>Security Overview</h3>
@@ -109,11 +120,11 @@ export default function UserDashboard() {
             <tbody>
               {recent.map((r) => (
                 <tr key={r.id}>
-                  <td>{new Date(r.created_at).toLocaleString()}</td>
+                  <td>{utcDate(r.created_at).toLocaleString('en-GB')}</td>
                   <td className="mono ellip">{r.url}</td>
                   <td>
-                    <span className={`badge ${r.prediction === 'phishing' ? 'phish' : 'legit'}`}>
-                      {r.prediction}
+                    <span className={`badge ${r.prediction === 'phishing' ? 'phish' : r.prediction === 'uncertain' ? 'review' : 'legit'}`}>
+                      {r.prediction === 'uncertain' ? 'suspicious' : r.prediction}
                     </span>
                   </td>
                   <td>
@@ -129,13 +140,10 @@ export default function UserDashboard() {
       </section>
 
       <DashboardVisuals
+        ref={visualsRef}
         visuals={visuals}
         dateFrom={dateFrom}
         dateTo={dateTo}
-        source={source}
-        onDateFromChange={setDateFrom}
-        onDateToChange={setDateTo}
-        onSourceChange={setSource}
         loading={loading}
       />
     </>

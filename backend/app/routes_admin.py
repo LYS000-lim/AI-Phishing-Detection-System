@@ -47,31 +47,9 @@ def dashboard(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    total_users = db.query(User).count()
-    total_scans = db.query(Detection).count()
-    total_phish = db.query(Detection).filter(Detection.label == 1).count()
-    total_legit = total_scans - total_phish
-
-    # Detection trend for the last 14 days
-    # Stored timestamps are naive UTC (see models.py), so compare against
-    # a naive UTC value here for portability across SQLite dialects.
-    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=14)
-    trend_rows = (
-        db.query(
-            func.date(Detection.created_at).label("day"),
-            func.sum((Detection.label == 1).cast(Integer)).label("phishing"),
-            func.sum((Detection.label == 0).cast(Integer)).label("legitimate"),
-        )
-        .filter(Detection.created_at >= since)
-        .group_by("day").order_by("day").all()
-    )
-    trend = [
-        {"day": r.day, "phishing": int(r.phishing or 0),
-         "legitimate": int(r.legitimate or 0)}
-        for r in trend_rows
-    ]
-
-    # User activity - top 10 scanners
+    # User activity - top 10 scanners (lifetime; not part of the date/source
+    # filter below since "who scans the most overall" is a different
+    # question from "what happened in this period").
     activity_rows = (
         db.query(User.full_name, User.email, func.count(Detection.id).label("scans"))
         .join(Detection, Detection.user_id == User.id)
@@ -82,62 +60,15 @@ def dashboard(
         for r in activity_rows
     ]
 
-    blocked_urls_count = db.query(BlockedURL).count()
-    pending_reports_count = (
-        db.query(ExtensionReport).filter(ExtensionReport.status == "pending").count()
-    )
-    attack_type_rows = (
-        db.query(Detection.attack_type, func.count(Detection.id).label("n"))
-        .filter(Detection.attack_type.isnot(None))
-        .group_by(Detection.attack_type)
-        .order_by(desc("n"))
-        .all()
-    )
-    attack_category_frequency = [
-        {"category": row[0], "count": int(row[1])} for row in attack_type_rows
-    ]
-    top_attack_type = attack_category_frequency[0]["category"] if attack_category_frequency else None
-
-    # Most targeted brand - derived from phishing URLs' hostnames rather than
-    # a stored column, since brand impersonation is a lightweight lookup
-    # (see phishing_type.detect_brand) not persisted on the Detection row.
-    phishing_urls = (
-        db.query(Detection.url).filter(Detection.label == 1).all()
-    )
-    brand_counts = Counter(
-        b for (url,) in phishing_urls if (b := detect_brand(url))
-    )
-    most_targeted_brand = brand_counts.most_common(1)[0][0] if brand_counts else None
-
     deployed_metrics = RF_METRICS if MODEL_LABEL == "RandomForest" else DT_METRICS
 
-    # Detection Source Distribution (lifetime) - supports the "extension
-    # integration" objective by showing where detections actually originate.
-    source_rows = (
-        db.query(Detection.source, func.count(Detection.id).label("n"))
-        .group_by(Detection.source).all()
-    )
-    source_counts = {row[0]: int(row[1]) for row in source_rows}
-    website_detections = source_counts.get("website", 0)
-    extension_detections = source_counts.get("extension", 0)
-    source_distribution = [
-        {
-            "source": name,
-            "count": count,
-            "percentage": round(count / total_scans * 100, 1) if total_scans else 0.0,
-        }
-        for name, count in (
-            ("Website Scanner", website_detections),
-            ("Chrome Extension", extension_detections),
-        )
-    ]
-
     # ------------------------------------------------------------------
-    # Interactive visuals block - Threat Trend, Detection Result Overview,
-    # Important URL Characteristics, Attack Category Analysis, Detection
-    # Source Distribution - all scoped to the days/source filters, kept
-    # separate from the System Overview cards above (which stay lifetime
-    # totals regardless of these filters). Same shape as the User
+    # Everything below - System Overview, Threat Intelligence, and the
+    # interactive visuals (Threat Trend, Detection Result Overview, Important
+    # URL Characteristics, Attack Category Analysis, Detection Source
+    # Distribution) - is scoped to the same days/date_from/date_to/source
+    # filters, so the whole dashboard (except the lifetime User Activity
+    # table above) reflects one selected period. Same shape as the User
     # Dashboard's /api/detections/dashboard-visuals so both pages share one
     # rendering component.
     # ------------------------------------------------------------------
@@ -147,10 +78,46 @@ def dashboard(
     )
     if source in ("website", "extension"):
         v_query = v_query.filter(Detection.source == source)
+    else:  # "All sources" excludes the admin's own test scans
+        v_query = v_query.filter(Detection.source.in_(("website", "extension")))
     v_rows = v_query.all()
 
     v_phishing = sum(1 for r in v_rows if r.label == 1)
     v_legitimate = len(v_rows) - v_phishing
+    v_active_users = len({r.user_id for r in v_rows if r.user_id is not None})
+    v_extension_detections = sum(1 for r in v_rows if r.source == "extension")
+    source_distribution = _source_distribution([r.source for r in v_rows])
+
+    blocked_urls_count = (
+        db.query(BlockedURL)
+        .filter(BlockedURL.created_at >= v_since, BlockedURL.created_at < v_until)
+        .count()
+    )
+    pending_reports_count = (
+        db.query(ExtensionReport)
+        .filter(
+            ExtensionReport.status == "pending",
+            ExtensionReport.created_at >= v_since,
+            ExtensionReport.created_at < v_until,
+        )
+        .count()
+    )
+
+    attack_category_frequency = [
+        {"category": category, "count": count}
+        for category, count in Counter(
+            r.attack_type for r in v_rows if r.attack_type
+        ).most_common()
+    ]
+    top_attack_type = attack_category_frequency[0]["category"] if attack_category_frequency else None
+
+    # Most targeted brand - derived from phishing URLs' hostnames rather than
+    # a stored column, since brand impersonation is a lightweight lookup
+    # (see phishing_type.detect_brand) not persisted on the Detection row.
+    brand_counts = Counter(
+        b for r in v_rows if r.label == 1 and (b := detect_brand(r.url))
+    )
+    most_targeted_brand = brand_counts.most_common(1)[0][0] if brand_counts else None
 
     v_trend_map = {}
     for r in v_rows:
@@ -159,49 +126,31 @@ def dashboard(
         bucket["phishing" if r.label == 1 else "legitimate"] += 1
     v_trend = [{"day": day, **counts} for day, counts in sorted(v_trend_map.items())]
 
-    v_attack_counts = Counter(r.attack_type for r in v_rows if r.attack_type)
-    v_attack_category_frequency = [
-        {"category": category, "count": count}
-        for category, count in v_attack_counts.most_common()
-    ]
-
-    v_source_rows = (
-        db.query(Detection.source)
-        .filter(Detection.created_at >= v_since, Detection.created_at < v_until)
-        .all()
-    )
-
     visuals = {
         "date_from": v_since.date().isoformat(),
         "date_to": (v_until - timedelta(days=1)).date().isoformat(),
         "trend": v_trend,
         "result_counts": {"phishing": v_phishing, "legitimate": v_legitimate},
         "feature_distribution": _feature_distribution([r.url for r in v_rows]),
-        "attack_category_frequency": v_attack_category_frequency,
-        "source_distribution": _source_distribution([s for (s,) in v_source_rows]),
+        "attack_category_frequency": attack_category_frequency,
+        "source_distribution": source_distribution,
     }
 
     return {
         "totals": {
-            "users": total_users,
-            "scans": total_scans,
-            "phishing": total_phish,
-            "legitimate": total_legit,
-            "extension_detections": extension_detections,
+            "users": v_active_users,
+            "scans": len(v_rows),
+            "phishing": v_phishing,
+            "legitimate": v_legitimate,
+            "extension_detections": v_extension_detections,
         },
-        "phishing_distribution": {
-            "phishing": total_phish, "legitimate": total_legit,
-        },
-        "trend_14d": trend,
         "top_users": activity,
         "blocked_urls_count": blocked_urls_count,
         "pending_reports_count": pending_reports_count,
         "most_common_attack_type": top_attack_type,
-        "attack_category_frequency": attack_category_frequency,
         "most_targeted_brand": most_targeted_brand,
         "detection_accuracy": deployed_metrics.get("accuracy"),
         "deployed_model": MODEL_LABEL,
-        "source_distribution": source_distribution,
         "visuals": visuals,
     }
 
@@ -295,14 +244,19 @@ def _filtered_detections_query(
         query = query.filter(
             (Detection.url.ilike(f"%{q}%")) | (User.email.ilike(f"%{q}%")),
         )
-    if result in ("phishing", "legitimate"):
+    if result in ("phishing", "legitimate", "uncertain"):
         query = query.filter(Detection.prediction == result)
     if risk in ("Low", "Medium", "High"):
         query = query.filter(Detection.risk_level == risk)
     if attack_type:
         query = query.filter(Detection.attack_type == attack_type)
-    if source in ("website", "extension", "admin"):
+    # Detection Logs only covers the two real detection sources; the
+    # admin's own test scans (source="admin") are never listed, including
+    # under "All sources".
+    if source in ("website", "extension"):
         query = query.filter(Detection.source == source)
+    else:
+        query = query.filter(Detection.source.in_(("website", "extension")))
 
     start, end = _date_range_bounds(date_from, date_to)
     if start:
@@ -344,7 +298,7 @@ def all_detections(
     attack_type: Optional[str] = None,
     date_from: Optional[str] = None,       # "YYYY-MM-DD"
     date_to: Optional[str] = None,
-    source: Optional[str] = None,          # "website" | "extension" | "admin"
+    source: Optional[str] = None,          # "website" | "extension"
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
@@ -650,6 +604,8 @@ def reported_urls(
     page: int = 1,
     page_size: int = 20,
     q: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
@@ -662,8 +618,12 @@ def reported_urls(
     )
 
 
+    # Legacy "rejected" rows (from before rejection deleted the report)
+    # are hidden - the admin already chose not to keep them.
     extension_reports = (
         db.query(ExtensionReport)
+        .options(joinedload(ExtensionReport.user))
+        .filter(ExtensionReport.status != "rejected")
         .order_by(desc(ExtensionReport.created_at))
         .all()
     )
@@ -691,8 +651,8 @@ def reported_urls(
         )
 
 
-    # Anonymous extension reports - the Chrome extension reports without a
-    # signed-in user, so there is no reporter to attribute.
+    # Extension reports - attributed to the user when the extension was
+    # signed in to a website account, otherwise anonymous.
     for r in extension_reports:
 
         items.append(
@@ -704,18 +664,23 @@ def reported_urls(
                 "source": "Chrome Extension",
                 "status": r.status,
                 "created_at": r.created_at,
-                "reported_by_name": None,
-                "reported_by_email": None,
+                "reported_by_name": r.user.full_name if r.user else None,
+                "reported_by_email": r.user.email if r.user else None,
             }
         )
 
 
-    # Search filter
+    # Search + date filters
     if q:
         items = [
             x for x in items
             if q.lower() in x["url"].lower()
         ]
+    start, end = _date_range_bounds(date_from, date_to)
+    if start:
+        items = [x for x in items if x["created_at"] >= start]
+    if end:
+        items = [x for x in items if x["created_at"] <= end]
 
 
     # Sort newest first
@@ -853,21 +818,16 @@ def reject_extension_report(
         )
 
 
-    report.status = "rejected"
-
-    report.reviewed_at = datetime.now(
-        timezone.utc
-    ).replace(tzinfo=None)
-
-
+    # "Do Not Save in Database": the admin has dismissed the report, so it
+    # is deleted outright rather than kept as a "rejected" row cluttering
+    # the Blacklist table. This also lets the URL be reported again later.
+    db.delete(report)
     db.commit()
-    db.refresh(report)
-
 
     return {
-        "message": "Extension report rejected",
-        "id": report.id,
-        "status": report.status,
+        "message": "Extension report removed",
+        "id": report_id,
+        "status": "removed",
     }
 
 # ---------------------------------------------------------------------------
@@ -876,14 +836,18 @@ def reject_extension_report(
 
 @router.get("/reported-urls/export")
 def export_blacklist_pdf(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    reports = (
-        db.query(ReportedURL)
-        .order_by(desc(ReportedURL.created_at))
-        .all()
-    )
+    query = db.query(ReportedURL)
+    start, end = _date_range_bounds(date_from, date_to)
+    if start:
+        query = query.filter(ReportedURL.created_at >= start)
+    if end:
+        query = query.filter(ReportedURL.created_at <= end)
+    reports = query.order_by(desc(ReportedURL.created_at)).all()
 
     file_path = "PhishGuard_Blacklist_Report.pdf"
 

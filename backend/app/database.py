@@ -35,6 +35,8 @@ def init_db() -> None:
     _ensure_detections_attack_type_column()
     _ensure_detections_source_column()
     _ensure_users_login_activity_columns()
+    _ensure_reset_attempts_column()
+    _ensure_extension_reports_user_column()
 
 
 def _ensure_detections_attack_type_column() -> None:
@@ -78,4 +80,30 @@ def _ensure_users_login_activity_columns() -> None:
             conn.commit()
         if cols and "last_logout_at" not in cols:
             conn.exec_driver_sql("ALTER TABLE users ADD COLUMN last_logout_at DATETIME")
+            conn.commit()
+
+
+def _ensure_reset_attempts_column() -> None:
+    """Same self-heal as above, for PasswordResetToken.attempts (added when
+    reset switched from an emailed link to an emailed 6-digit code)."""
+    if not DB_URL.startswith("sqlite"):
+        return
+    with engine.connect() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(password_reset_tokens)")}
+        if cols and "attempts" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE password_reset_tokens ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.commit()
+
+
+def _ensure_extension_reports_user_column() -> None:
+    """Same self-heal as above, for ExtensionReport.user_id (who reported
+    the URL from a signed-in extension)."""
+    if not DB_URL.startswith("sqlite"):
+        return
+    with engine.connect() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(extension_reports)")}
+        if cols and "user_id" not in cols:
+            conn.exec_driver_sql("ALTER TABLE extension_reports ADD COLUMN user_id INTEGER")
             conn.commit()

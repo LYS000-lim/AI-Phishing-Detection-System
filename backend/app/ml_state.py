@@ -24,6 +24,29 @@ DT_METRICS = METRICS.get("decision_tree", {})
 RF_METRICS = METRICS.get("random_forest", {})
 MODEL_LABEL = METRICS.get("winner", type(MODEL).__name__ if MODEL else "unknown")
 
+# Decision thresholds tuned on a validation split at training time (see the
+# training notebook); 0.5/0.5 reproduces plain model.predict() behaviour.
+THRESHOLDS = METRICS.get("thresholds", {})
+PHISH_THRESHOLD = float(THRESHOLDS.get("phishing", 0.5))
+UNCERTAIN_THRESHOLD = float(THRESHOLDS.get("uncertain", PHISH_THRESHOLD))
+
+
+def classify_vec(vec, features, url=None):
+    """explanations.classify with the deployed model and tuned thresholds,
+    then the domain-reputation cap: a "phishing" verdict on a well-
+    established domain (reputation.py) becomes "uncertain" (shown as
+    Suspicious) with uncertain_reason "reputable_domain"."""
+    from .explanations import classify
+    from .reputation import domain_reputation
+    result = classify(vec, features, MODEL, PHISH_THRESHOLD, UNCERTAIN_THRESHOLD)
+    result["reputation"] = None
+    if url:
+        rep = domain_reputation(url)
+        result["reputation"] = rep
+        if result["prediction"] == "phishing" and rep["reputable"]:
+            result.update(prediction="uncertain", risk="Medium", uncertain_reason="reputable_domain")
+    return result
+
 
 def model_info() -> dict:
     """Descriptor the frontend puts on the result card."""

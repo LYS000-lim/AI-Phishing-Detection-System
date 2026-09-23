@@ -1,3 +1,4 @@
+import ipaddress
 import re
 from datetime import datetime
 from typing import List, Literal, Optional
@@ -29,6 +30,14 @@ def _validate_password_strength(v: str) -> str:
     return v
 
 
+def _is_private_ip(host: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified
+
+
 def _validate_url(v: str) -> str:
     """Reject empty/garbage/oversized input before it reaches feature
     extraction -- min_length=4 alone lets "asdf" through as a "URL"."""
@@ -38,7 +47,14 @@ def _validate_url(v: str) -> str:
     if len(v) > _URL_MAX_LEN:
         raise ValueError(f"URL too long (max {_URL_MAX_LEN} characters)")
     raw = v if v.lower().startswith(("http://", "https://")) else "http://" + v
-    host = urlparse(raw).netloc.split("@")[-1].split(":")[0]
+    host = urlparse(raw).netloc.split("@")[-1].split(":")[0].lower()
+    if host == "localhost" or host.endswith(".localhost") or _is_private_ip(host):
+        # Same rule as the Chrome extension: local/LAN addresses have no
+        # public domain for the model to judge, so they are never scanned.
+        raise ValueError(
+            "Local or private network addresses (such as localhost or "
+            "192.168.x.x) can't be scanned - enter a public website URL."
+        )
     if not host or "." not in host:
         raise ValueError("Enter a valid website URL, e.g. https://example.com")
     return v
@@ -80,7 +96,8 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    token: str = Field(..., min_length=1)
+    email: EmailStr
+    code: str = Field(..., pattern=r"^\d{6}$")
     new_password: str = Field(..., min_length=_PASSWORD_MIN_LEN, max_length=128)
 
     _check_new_password = field_validator("new_password")(_validate_password_strength)

@@ -11,11 +11,12 @@ from .auth import current_user, hash_password, verify_password
 from .allowlist import is_trusted, matched_domain
 from .database import get_db
 from .explanations import (
-    build_evidence, build_reason_bullets, plain_text_explanation, risk_level,
+    build_evidence, build_reason_bullets,
+    plain_text_explanation, risk_level,
 )
 from .features import FEATURE_ORDER, extract_features, feature_vector
-from .ml_state import get_lime_explainer, get_shap_explainer, model_info, MODEL
-from .models import Detection, ReportedURL, User
+from .ml_state import classify_vec, get_lime_explainer, get_shap_explainer, model_info, MODEL
+from .models import Detection, ReportedURL, User, UserBlockedURL
 from .schemas import (
     BatchRequest, DetectionOut, PasswordChange, ProfileUpdate,
     ReportURLRequest, ReportedURLOut,
@@ -87,13 +88,18 @@ def _predict_and_log(
         )
 
     vec = feature_vector(url)
-    label = int(MODEL.predict(vec)[0])                 # 0=Legit, 1=Phish
-    proba = MODEL.predict_proba(vec)[0]
-    p_phish = float(proba[1])
-    confidence = float(max(proba))
-    prediction = "phishing" if label == 1 else "legitimate"
-    risk = risk_level(p_phish)
     features = extract_features(url)
+
+    # Tuned thresholds + the missing-HTTPS softening live in one place
+    # (explanations.classify). `label`/`phishing_probability` still store
+    # the model's raw decision, so dashboard/aggregate stats keep reporting
+    # true model behaviour -- only prediction/risk_level are softened.
+    verdict = classify_vec(vec, features, url)
+    label = verdict["label"]                           # 0=Legit, 1=Phish
+    p_phish = verdict["p_phish"]
+    confidence = verdict["confidence"]
+    prediction = verdict["prediction"]
+    risk = verdict["risk"]
 
     attack_type = None
     if prediction == "phishing":
@@ -123,10 +129,12 @@ def _predict_and_log(
         "label": label,
         "confidence": round(confidence, 4),
         "phishing_probability": round(p_phish, 4),
-        "legitimate_probability": round(float(proba[0]), 4),
+        "legitimate_probability": round(1 - p_phish, 4),
         "risk_level": risk,
         "model_used": model_info()["name"],
         "trusted_domain": False,
+        "uncertain_reason": verdict["uncertain_reason"],
+        "reputation": verdict["reputation"],
         "features": features,
         "attack_type": attack_type,
         "created_at": record.created_at.isoformat(),
@@ -218,11 +226,14 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
     except Exception as exc:
         raise HTTPException(422, f"Could not process URL: {exc}")
 
-    label = int(MODEL.predict(vec)[0])
-    proba = MODEL.predict_proba(vec)[0]
-    p_phish = float(proba[1])
-    prediction = "phishing" if label == 1 else "legitimate"
-    risk = risk_level(p_phish)
+    verdict = classify_vec(vec, features, req.url)
+    label = verdict["label"]
+    p_phish = verdict["p_phish"]
+    prediction = verdict["prediction"]
+    risk = verdict["risk"]
+    uncertain_reputable = verdict["uncertain_reason"] == "reputable_domain"
+    uncertain_https = verdict["uncertain_reason"] == "https_only"
+    uncertain_borderline = verdict["uncertain_reason"] == "borderline"
 
     # SHAP contributions for class 1 (phishing).
     shap_exp = get_shap_explainer()
@@ -259,36 +270,112 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         if prediction == "phishing"
         else None
     )
-    why_detected = build_reason_bullets(
-        prediction,
-        features,
-        shap_out,
-        attack_analysis=attack_analysis,
-        limit=4,
-    )
-    evidence = build_evidence(
-        prediction,
-        features,
-        shap_out,
-        lime_out,
-        limit=3,
-    )
-    plain = plain_text_explanation(prediction, risk, shap_out)
 
-    security_analysis = None
-    if prediction == "legitimate":
+    if uncertain_reputable:
+        # The model scored the URL text as phishing, but the registered
+        # domain is a well-established website, so the verdict is capped.
+        rep = verdict["reputation"]
+        why_detected = build_reason_bullets(
+            "phishing", features, shap_out, attack_analysis=None, limit=3,
+        )
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
+        plain = (
+            f"Suspicious. The address pattern resembles phishing ({p_phish:.0%} "
+            f"phishing score), but it belongs to {rep['domain']}, a well-established "
+            f"website (ranked #{rep['rank']:,} globally), so it is not treated as "
+            "confirmed phishing. Make sure the domain is exactly "
+            f"{rep['domain']} before entering passwords or payment details."
+        )
         security_analysis = [
-            "No significant phishing indicators were detected by the ML model.",
-            "The URL structure matches characteristics commonly associated with legitimate websites.",
+            f"The registered domain {rep['domain']} is among the most visited "
+            f"websites worldwide (Tranco rank #{rep['rank']:,}).",
+            "Login, account and payment pages of real services often have "
+            "address patterns similar to phishing pages, so a URL-pattern "
+            "score alone is not treated as proof for an established domain.",
         ]
+    elif uncertain_borderline:
+        # Score between the tuned "uncertain" and "phishing" thresholds:
+        # some phishing-like signals, but not enough for a hard verdict.
+        why_detected = build_reason_bullets(
+            "phishing", features, shap_out, attack_analysis=None, limit=3,
+        )
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
+        plain = (
+            f"Suspicious (low-confidence result, {p_phish:.0%} phishing score). "
+            "Some URL characteristics resemble phishing, but not strongly "
+            "enough to confirm it. This is not a confirmed phishing detection - "
+            "check the domain name carefully before entering passwords or "
+            "payment details."
+        )
+        security_analysis = [
+            "The model's phishing score for this URL falls in the borderline "
+            "range: above what is treated as safe, below the confidence needed "
+            "for a phishing verdict.",
+            "Low-confidence results are shown as suspicious instead of "
+            "phishing to avoid falsely accusing legitimate websites.",
+        ]
+    elif uncertain_https:
+        # build_reason_bullets/build_evidence/plain_text_explanation only
+        # know "phishing" vs. "legitimate" wording -- "uncertain" gets its
+        # own bespoke text here instead of falling into their legitimate-ish
+        # else-branch, which would read as a false all-clear.
+        why_detected = [
+            "The model's own top-weighted signal for this URL is the absence "
+            "of a secure HTTPS connection, not a confirmed phishing pattern.",
+            "Testing the same URL as if it were served over HTTPS flips the "
+            "model's verdict to legitimate, meaning the missing-HTTPS signal "
+            "alone is driving the phishing call.",
+            "Missing HTTPS is a real risk factor genuine phishing sites often "
+            "share, but many legitimate (often older or informational) sites "
+            "still don't use it, so this alone isn't treated as proof.",
+        ]
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
+        plain = (
+            f"Suspicious (low-confidence result, {p_phish:.0%} phishing score). "
+            "The score is driven mainly by the lack of an HTTPS connection, which "
+            "is a real but not conclusive risk signal. This is not a confirmed "
+            "phishing detection - check the domain name carefully before "
+            "entering passwords or payment details."
+        )
+        security_analysis = [
+            "The model's phishing call for this URL is driven almost entirely "
+            "by the missing HTTPS connection, not by other structural red flags.",
+            "This is shown as suspicious rather than a confirmed phishing "
+            "result, since many legitimate sites still don't use HTTPS.",
+        ]
+    else:
+        why_detected = build_reason_bullets(
+            prediction,
+            features,
+            shap_out,
+            attack_analysis=attack_analysis,
+            limit=4,
+        )
+        evidence = build_evidence(
+            prediction,
+            features,
+            shap_out,
+            lime_out,
+            limit=3,
+        )
+        plain = plain_text_explanation(prediction, risk, shap_out)
+
+        security_analysis = None
+        if prediction == "legitimate":
+            security_analysis = [
+                "No significant phishing indicators were detected by the ML model.",
+                "The URL structure matches characteristics commonly associated with legitimate websites.",
+            ]
 
     return {
         "url": req.url,
         "prediction": prediction,
         "risk_level": risk,
-        "confidence": round(float(max(proba)), 4),
+        "confidence": round(verdict["confidence"], 4),
+        "uncertain_reason": verdict["uncertain_reason"],
+        "reputation": verdict["reputation"],
         "phishing_probability": round(p_phish, 4),
-        "legitimate_probability": round(float(proba[0]), 4),
+        "legitimate_probability": round(1 - p_phish, 4),
         "model_used": model_info()["name"],
         "trusted_domain": False,
         "plain_text": plain,
@@ -711,6 +798,46 @@ def my_reports(
         .order_by(desc(ReportedURL.created_at))
         .all()
     )
+
+# ---------------------------------------------------------------------------
+# Websites the user blocked from the extension ("Block URL")
+# ---------------------------------------------------------------------------
+@router.get("/api/my-blocked-urls")
+def my_blocked_urls(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    rows = (
+        db.query(UserBlockedURL)
+        .filter(UserBlockedURL.user_id == user.id)
+        .order_by(desc(UserBlockedURL.created_at))
+        .all()
+    )
+    return [
+        {
+            "id": r.id, "url": r.url, "hostname": r.hostname,
+            "attack_type": r.attack_type, "created_at": r.created_at,
+        }
+        for r in rows
+    ]
+
+
+@router.delete("/api/my-blocked-urls/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
+def unblock_url(
+    block_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    row = (
+        db.query(UserBlockedURL)
+        .filter(UserBlockedURL.id == block_id, UserBlockedURL.user_id == user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(404, "Blocked URL not found")
+    db.delete(row)
+    db.commit()
+
 
 # ---------------------------------------------------------------------------
 # Profile

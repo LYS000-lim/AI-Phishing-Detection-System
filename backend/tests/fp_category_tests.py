@@ -17,8 +17,10 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 import joblib
+import numpy as np
 import pandas as pd
 
+from app.explanations import classify
 from app.features import URL_ONLY_FEATURES, compute_features
 
 TEST_CASES = {
@@ -98,15 +100,29 @@ def main():
     outputs_dir = os.path.join(ROOT, "outputs")
     tld_lookup = joblib.load(os.path.join(outputs_dir, "tld_probability_lookup.joblib"))
     char_lookup = joblib.load(os.path.join(outputs_dir, "char_probability_lookup.joblib"))
-    model = joblib.load(os.path.join(outputs_dir, "rf_model.joblib"))
+    model = joblib.load(os.path.join(outputs_dir, "deployment_model.joblib"))
+    thresholds = joblib.load(os.path.join(outputs_dir, "deployment_metrics.joblib")).get("thresholds", {})
+    t_phish = float(thresholds.get("phishing", 0.5))
+    t_unc = float(thresholds.get("uncertain", t_phish))
+    print(f"Thresholds: phishing>={t_phish}, uncertain>={t_unc}")
 
     rows = []
     for category, cases in TEST_CASES.items():
         for url, expected in cases:
             feats = compute_features(url, tld_lookup, char_lookup)
             fv = [[feats[n] for n in URL_ONLY_FEATURES]]
+            fv_arr = np.array(fv)
             p_phish = float(model.predict_proba(fv)[0][1])
             pred = int(p_phish >= 0.5)
+
+            # Mirrors routes_user.py/routes_extension.py: a raw "phishing"
+            # call driven entirely by the missing-HTTPS signal is what the
+            # live app actually shows as a neutral "uncertain" verdict, not
+            # a hard phishing accusation -- reflected here so a "wrong" row
+            # below isn't misread as an unfixed false-positive when the API
+            # layer already softens it.
+            api_verdict = classify(fv_arr, feats, model, t_phish, t_unc)["prediction"]
+
             rows.append({
                 "category": category,
                 "url": url,
@@ -114,6 +130,7 @@ def main():
                 "predicted": pred,
                 "p_phish": round(p_phish, 3),
                 "correct": pred == expected,
+                "api_verdict": api_verdict,
             })
 
     results = pd.DataFrame(rows)
@@ -131,8 +148,14 @@ def main():
 
     wrong = results[~results["correct"]]
     if len(wrong):
-        print("\nMisclassified:")
-        print(wrong[["category", "url", "expected", "predicted", "p_phish"]].to_string(index=False))
+        softened = wrong[wrong["api_verdict"] == "uncertain"]
+        hard_wrong = wrong[wrong["api_verdict"] != "uncertain"]
+        if len(hard_wrong):
+            print("\nMisclassified (shown as a hard phishing/legitimate verdict in the live app):")
+            print(hard_wrong[["category", "url", "expected", "predicted", "p_phish"]].to_string(index=False))
+        if len(softened):
+            print("\nRaw-model miss, but softened to 'uncertain' (not a hard accusation) in the live app:")
+            print(softened[["category", "url", "expected", "predicted", "p_phish"]].to_string(index=False))
 
 
 if __name__ == "__main__":

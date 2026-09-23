@@ -46,3 +46,10 @@ function pgFormatTime(ms) {
         return "";
     }
 }
+
+// Authorization header for the signed-in website account (if any), so
+// reports made from extension pages are attributed to that user.
+async function pgAuthHeaders() {
+    const auth = await chrome.storage.session.get("pgAuthToken");
+    return auth.pgAuthToken ? { Authorization: `Bearer ${auth.pgAuthToken}` } : {};
+}

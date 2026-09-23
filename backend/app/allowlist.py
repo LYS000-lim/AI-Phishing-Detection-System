@@ -91,6 +91,15 @@ TRUSTED_DOMAINS = {
 
     # Common TLDs for national/gov sites often flagged incorrectly
     "gov.uk", "gov.au", "gov.sg", "gov.in", "canada.ca",
+
+    # Well-known reference/security/productivity tools whose deep-linked
+    # pages (long paths, embedded hashes/digits, dataset/tool-name slugs)
+    # get misread as phishing-shaped by the URL-structure-only model, even
+    # though the sites themselves are unambiguously legitimate.
+    "quillbot.com", "virustotal.com", "archive.ics.uci.edu",
+    "grammarly.com", "turnitin.com", "scholar.google.com",
+    "researchgate.net", "sciencedirect.com", "ieee.org", "springer.com",
+    "kaggle.com", "colab.research.google.com",
 }
 
 # Common two-level TLDs that need special handling when extracting the
@@ -165,6 +174,12 @@ def is_trusted(url: str) -> bool:
         raw = url.strip()
         if not raw.lower().startswith(("http://", "https://")):
             raw = "http://" + raw
+        # Never trust user-published content, even on a trusted company's
+        # domain (e.g. sites.google.com, docs.google.com forms) - attackers
+        # host phishing pages there precisely because of the trusted name.
+        from .reputation import is_user_content_host
+        if is_user_content_host(raw):
+            return False
         host = urlparse(raw).netloc
         return any(c in TRUSTED_DOMAINS for c in _domain_candidates(host))
     except Exception:
@@ -179,6 +194,9 @@ def matched_domain(url: str) -> str:
         raw = url.strip()
         if not raw.lower().startswith(("http://", "https://")):
             raw = "http://" + raw
+        from .reputation import is_user_content_host
+        if is_user_content_host(raw):
+            return ""
         host = urlparse(raw).netloc
         for c in _domain_candidates(host):
             if c in TRUSTED_DOMAINS:
