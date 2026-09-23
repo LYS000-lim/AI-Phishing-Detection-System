@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { utcDate } from '../../dates.js'
 import { adminDetections, adminExtensionMonitoring } from '../../api.js'
+import DateRangeFilter from '../DateRangeFilter.jsx'
 
 export default function AdminExtensionMonitoring() {
   const [summary, setSummary] = useState(null)
@@ -10,13 +11,16 @@ export default function AdminExtensionMonitoring() {
   const pageSize = 20
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [datesValid, setDatesValid] = useState(true)
 
   const load = () => {
     setLoading(true)
     setError('')
     Promise.all([
-      adminExtensionMonitoring(),
-      adminDetections('', '', page, pageSize, '', '', '', '', 'extension'),
+      adminExtensionMonitoring(dateFrom, dateTo),
+      adminDetections('', '', page, pageSize, '', '', dateFrom, dateTo, 'extension'),
     ])
       .then(([s, d]) => { setSummary(s); setRows(d.items); setTotal(d.total) })
       .catch((e) => setError(e.message))
@@ -36,6 +40,21 @@ export default function AdminExtensionMonitoring() {
         <h2>Browser Extension Monitoring</h2>
         <p className="tagline">System-wide view of detections made through the Chrome extension, across all signed-in users.</p>
       </div>
+
+      <section className="panel">
+        <div className="filters" style={{ flexWrap: 'wrap', marginBottom: 0 }}>
+          <DateRangeFilter
+            from={dateFrom}
+            to={dateTo}
+            allowEmpty
+            onChange={(f, t) => { setDateFrom(f); setDateTo(t) }}
+            onValidityChange={setDatesValid}
+          />
+          <button className="scan-btn small" disabled={!datesValid} onClick={() => { setPage(1); load() }}>
+            Apply
+          </button>
+        </div>
+      </section>
 
       {error && <div className="error-box">{error}</div>}
 

@@ -162,7 +162,12 @@ export const adminScanURL = (url) =>
   request('/api/admin/scan', { method: 'POST', body: { url } })
 
 // ------ Admin Browser Extension Monitoring ------
-export const adminExtensionMonitoring = () => request('/api/admin/extension-monitoring')
+export const adminExtensionMonitoring = (dateFrom = '', dateTo = '') => {
+  const params = new URLSearchParams()
+  if (dateFrom) params.set('date_from', dateFrom)
+  if (dateTo) params.set('date_to', dateTo)
+  return request(`/api/admin/extension-monitoring?${params.toString()}`)
+}
 
 // ------ Detection Logs export ------
 export const exportDetections = async (format, filters = {}) => {

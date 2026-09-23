@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { utcDate } from '../../dates.js'
 import { myBlockedURLs, unblockURL } from '../../api.js'
+import DateRangeFilter from '../DateRangeFilter.jsx'
 
 // Websites the user blocked with "Block URL" on the Chrome extension's
 // warning page while the extension was signed in to this account.
@@ -9,6 +10,8 @@ export default function BlockedWebsites() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [q, setQ] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
   useEffect(() => {
     myBlockedURLs()
@@ -27,9 +30,19 @@ export default function BlockedWebsites() {
     }
   }
 
-  const shown = q
-    ? rows.filter((r) => r.url.toLowerCase().includes(q.toLowerCase()))
-    : rows
+  // Local calendar date (YYYY-MM-DD) of each block, compared with the
+  // DD/MM/YYYY range picked by the user (DateRangeFilter emits ISO dates).
+  const localDay = (value) => {
+    const d = utcDate(value)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+  const shown = rows.filter((r) => {
+    if (q && !r.url.toLowerCase().includes(q.toLowerCase())) return false
+    const day = localDay(r.created_at)
+    if (dateFrom && day < dateFrom) return false
+    if (dateTo && day > dateTo) return false
+    return true
+  })
 
   return (
     <>
@@ -44,12 +57,18 @@ export default function BlockedWebsites() {
       {error && <div className="error-box">{error}</div>}
 
       <section className="panel">
-        <div className="filters" style={{ marginBottom: 14 }}>
+        <div className="filters" style={{ flexWrap: 'wrap', marginBottom: 14 }}>
           <input
             className="scan-input"
             placeholder="Search blocked URLs…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
+          />
+          <DateRangeFilter
+            from={dateFrom}
+            to={dateTo}
+            allowEmpty
+            onChange={(f, t) => { setDateFrom(f); setDateTo(t) }}
           />
         </div>
 
@@ -59,7 +78,7 @@ export default function BlockedWebsites() {
           <p className="empty">
             {rows.length === 0
               ? 'No blocked websites yet. Blocks are saved here when the extension is signed in to your account (Extension Settings → Website Account).'
-              : 'No blocked websites match your search.'}
+              : 'No blocked websites match your search or date range.'}
           </p>
         ) : (
           <table className="hist">

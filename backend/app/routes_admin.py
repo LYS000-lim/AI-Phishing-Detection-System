@@ -160,16 +160,19 @@ def dashboard(
 # ---------------------------------------------------------------------------
 @router.get("/extension-monitoring")
 def extension_monitoring(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
     base = db.query(Detection).filter(Detection.source == "extension")
+    start, end = _date_range_bounds(date_from, date_to)
+    if start:
+        base = base.filter(Detection.created_at >= start)
+    if end:
+        base = base.filter(Detection.created_at <= end)
 
-    total_extension_users = (
-        db.query(Detection.user_id)
-        .filter(Detection.source == "extension")
-        .distinct().count()
-    )
+    total_extension_users = base.with_entities(Detection.user_id).distinct().count()
     extension_detection_count = base.count()
     threats_found = base.filter(Detection.label == 1).count()
 
