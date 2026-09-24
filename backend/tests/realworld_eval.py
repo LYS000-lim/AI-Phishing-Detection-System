@@ -12,6 +12,12 @@ Compares three stages, so the report can show what each layer contributes:
 Also sweeps the reputation rank cut-off, and measures how much PhiUSIIL
 phishing sits on domains the reputation layer would treat as reputable.
 
+If phish_feed_urls.csv exists (notebooks/harvest_phish_feeds.py), its 2026
+phishunt URLs are added as a second phishing source. Training only uses feed
+URLs first seen before 2026, so both phishing sources are a time-based test.
+"per campaign" rates count each domain/host group once, so one large
+campaign (e.g. 12 URLs on ~primeli3/admin) cannot dominate the result.
+
 Run: python backend/tests/realworld_eval.py
 """
 import os
@@ -25,7 +31,9 @@ import pandas as pd  # noqa: E402
 from app.allowlist import is_trusted  # noqa: E402
 from app.features import extract_features, feature_vector  # noqa: E402
 from app.ml_state import classify_vec  # noqa: E402
-from app.reputation import MAX_RANK, domain_reputation  # noqa: E402
+from app.reputation import (  # noqa: E402
+    MAX_RANK, _extract_icann, _host, domain_reputation, is_user_content_host,
+)
 
 pd.set_option("display.width", 200)
 pd.set_option("display.max_columns", None)
@@ -43,6 +51,14 @@ def verdicts(url):
     }
 
 
+def group(u):
+    """Campaign key: registered domain, or full host on shared hosting."""
+    h = _host(u)
+    if not h:
+        return ""
+    return h if is_user_content_host(u) else (_extract_icann(h).top_domain_under_public_suffix or h)
+
+
 def system(row, cutoff, use_allowlist=True, use_rep=True):
     if use_allowlist and row["trusted"]:
         return "legitimate"
@@ -53,18 +69,29 @@ def system(row, cutoff, use_allowlist=True, use_rep=True):
 
 def summarise(df, col):
     legit, phish = df[df.label == 0], df[df.label == 1]
+    per_group = phish.assign(hit=phish[col] == "phishing").groupby("group")["hit"].mean()
     return {
         "legit_called_PHISHING": f"{(legit[col] == 'phishing').mean():.1%}",
         "legit_suspicious": f"{(legit[col] == 'uncertain').mean():.1%}",
         "phish_called_PHISHING": f"{(phish[col] == 'phishing').mean():.1%}",
         "phish_any_warning": f"{(phish[col] != 'legitimate').mean():.1%}",
+        "phish_PHISHING_per_campaign": f"{per_group.mean():.1%}",
     }
 
 
 def main():
     df = pd.read_csv(os.path.join(ROOT, "realworld_eval_set.csv"))
+    feed_csv = os.path.join(ROOT, "phish_feed_urls.csv")
+    if os.path.exists(feed_csv):
+        feed = pd.read_csv(feed_csv)
+        feed = feed[(feed.first_seen >= "2026-01-01") & (feed.source == "phishunt")
+                    & ~feed.url.isin(set(df.url))]
+        df = pd.concat([df, pd.DataFrame({
+            "url": feed.url, "label": 1, "category": "phishunt_feed", "source": "phishunt",
+            "status": "", "fetched_on": feed.first_seen})], ignore_index=True)
+    df["group"] = df.url.map(group)
     print(f"Set: {int((df.label == 0).sum())} legitimate, {int((df.label == 1).sum())} phishing "
-          f"(fetched {df.fetched_on.iloc[0]})\n")
+          f"in {df[df.label == 1].group.nunique()} campaigns (fetched {df.fetched_on.iloc[0]})\n")
     df = pd.concat([df, pd.DataFrame([verdicts(u) for u in df.url])], axis=1)
 
     df["s_model"] = df.apply(lambda r: system(r, 0, False, False), axis=1)
@@ -76,6 +103,10 @@ def main():
     print(pd.DataFrame(rows).T.to_string(), "\n")
 
     col = f"s_{MAX_RANK}"
+    for cat in sorted(df[df.label == 1].category.unique()):
+        sub = df[(df.label == 0) | (df.category == cat)]
+        print(f"Deployed system, phishing source {cat}:", summarise(sub, col))
+    print()
     print(f"Deployed cut-off (top {MAX_RANK:,}) by category:")
     by = df.groupby(["label", "category"])[col].value_counts().unstack(fill_value=0)
     print(by.to_string(), "\n")

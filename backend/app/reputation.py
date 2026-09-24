@@ -82,6 +82,46 @@ HOSTING_PLATFORMS = {
     "itsaol.com", "zzux.com", "yourtrap.com", "longmusic.com", "2waky.com",
     "duckdns.org", "ngrok.io", "ngrok-free.app", "ngrok.app", "trycloudflare.com",
     "serveo.net", "no-ip.com", "ddns.net", "hopto.org", "zapto.org",
+    # found in 2024-25 Phishing.Database feeds: popular domains listed with
+    # many different phishing subdomains (notebooks/harvest_phish_feeds.py)
+    "appdomain.cloud", "filesusr.com", "mybluehost.me", "mybluehostin.me",
+    "teachable.com", "thinkific.com", "atwebpages.com", "page.link", "app.link",
+    "serv00.net", "ct8.pl", "temporary.site", "temporary.link", "studio.site",
+    "easy.co", "b-cdn.net", "liveblog365.com", "lovestoblog.com", "jimdofree.com",
+    "moonfruit.com", "inmotionhosting.com", "softlayer.net", "nxcli.net", "nxcli.io",
+    "flywheelsites.com", "codesandbox.io", "tripod.com", "angelfire.com", "sibforms.com",
+    "kinsta.cloud", "googleusercontent.com", "tiiny.site", "edgeone.app", "edgeone.dev",
+    "contaboserver.net", "mytemp.website", "unaux.com", "kesug.com", "wuaze.com",
+    "free.nf", "42web.io", "great-site.net", "neocities.org", "webnode.page",
+    "webnode.com", "webnode.es", "sg-host.com", "goorm.io", "stackstaging.com",
+    "hs-sites.com", "hs-sites-eu1.com", "netsolhost.com", "somee.com", "cloudlets.zone",
+    "sitey.me", "ucoz.net", "sslip.io", "nip.io", "wasmer.app", "koyeb.app",
+    "webador.com", "netsons.org", "16mb.com", "esy.es", "hol.es", "my-free.website",
+    "mobirisesite.com", "editmysite.com", "business.site", "multiscreensite.com",
+    "powerappsportals.com", "bitrix24.site", "hstgr.cloud", "onrocket.site",
+    "web-hosting.com", "webhostbox.net", "x10host.com", "x10.mx", "atspace.com",
+    "orgfree.com", "tilda.ws", "mystagingwebsite.com", "mywebsitetransfer.com",
+    "websitetestlink.com", "shopifypreview.com", "eth.limo", "icp0.io", "zapier.app",
+    "azurecontainerapps.io", "unifiedlayer.com", "mysecurecloudhost.com", "fc2.com",
+    "over-blog.com", "webs.com", "cargo.site", "mypinata.cloud", "upcloudobjects.com",
+    "selstorage.ru", "bget.ru", "nichost.ru", "at.ua", "1gb.ua", "cba.pl",
+    "dothome.co.kr", "xsrv.jp", "xdomain.jp", "mixh.jp", "peraichi.com",
+    "meusitehostgator.com.br", "hospedagemdesites.ws", "lojaintegrada.com.br",
+    "crabdance.com", "zyns.com", "dynamic-dns.net", "ydns.eu", "dns05.com", "dns04.com",
+    "serveuser.com", "serveusers.com", "dvrlists.com", "dnset.com", "myddns.me",
+    "myddns.com", "ddns.us", "ddnss.eu", "ddns.info", "ddns.ms", "ddns.mobi",
+    "linkpc.net", "mooo.com", "us.to", "my.to", "odns.fr", "ignorelist.com",
+    "strangled.net", "dynssl.com", "freeddns.com", "anondns.net", "abrdns.com",
+    "changeip.co", "changeip.us", "chickenkiller.com", "jumpingcrab.com",
+    "twilightparadox.com", "sieraddns.com", "f3322.net", "v6.rocks", "wikaba.com",
+    "otzo.com", "x24hr.com", "ocry.com", "ezua.com", "4dq.com", "25u.com", "jkub.com",
+    "itemdb.com", "misecure.com", "jetos.com", "ourhobby.com", "my03.com",
+    "onedumb.com", "dumb1.com", "qpoe.com", "4pu.com", "myz.info", "freetcp.com",
+    "mrbasic.com", "mrbonus.com", "qhigh.com", "mefound.com", "ftp1.biz", "ikwb.com",
+    "vizvaz.com", "faqserv.com", "fartit.com", "instanthq.com", "acmetoy.com",
+    "justdied.com", "almostmy.com", "jungleheart.com", "mrface.com", "mynetav.com",
+    "onmypc.net", "ftp.sh", "youdontcare.com", "ueuo.com", "tftpd.net", "servconfig.com",
+    "run.place", "lflink.com", "lflinkup.com", "myftp.info", "easterndns.com",
 }
 
 # Specific subdomains of otherwise-reputable companies where users publish
@@ -105,6 +145,8 @@ def is_user_content_host(url: str) -> bool:
     return (
         private_reg != icann_reg
         or icann_reg in HOSTING_PLATFORMS
+        # blogspot.<country> mirrors of Blogger (dropped from the bundled PSL)
+        or icann_reg.split(".", 1)[0] == "blogspot"
         or any(host == h or host.endswith("." + h) for h in HOSTING_HOSTS)
     )
 
