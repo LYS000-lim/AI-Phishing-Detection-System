@@ -1,6 +1,7 @@
 import os
 import re
 from typing import Optional
+from urllib.parse import urlparse
 
 import joblib
 import numpy as np
@@ -31,20 +32,62 @@ PHISH_THRESHOLD = float(THRESHOLDS.get("phishing", 0.5))
 UNCERTAIN_THRESHOLD = float(THRESHOLDS.get("uncertain", PHISH_THRESHOLD))
 
 
+# URLs with a path or query must look clearly legitimate over HTTPS (not just
+# below the Suspicious threshold) before the HTTP rule clears them: pages on
+# hacked university subdomains and open redirects (m.vk.com/away.php?to=...)
+# otherwise slipped through. Bare homepages keep the Suspicious threshold.
+# 0.5 was chosen from the same simulation it is reported on (slightly
+# optimistic).
+#
+# KNOWN LIMITATION (measured on all PhiUSIIL + 2024-25 feed phishing on
+# reputable domains): 163 phishing-labelled URLs become "legitimate" under
+# this rule. 162 are bare homepages of real services that PhiUSIIL labels
+# phishing (ipify.org, coinbase.com, w3.org, ... - label noise). One is
+# genuine: http://math.mak.ac.ug/aux, a page on a compromised university
+# subdomain (HTTPS score 0.28 - no threshold separates it). URL text cannot
+# show that a reputable domain has been hacked. No 2026 test phishing is
+# affected.
+HTTP_RULE_PATH_THRESHOLD = 0.5
+
+
+def _http_rule_threshold(url):
+    parsed = urlparse(url.strip())
+    has_path = bool((parsed.path or "").strip("/")) or bool(parsed.query)
+    return min(HTTP_RULE_PATH_THRESHOLD, UNCERTAIN_THRESHOLD) if has_path else UNCERTAIN_THRESHOLD
+
+
 def classify_vec(vec, features, url=None):
     """explanations.classify with the deployed model and tuned thresholds,
     then the domain-reputation cap: a "phishing" verdict on a well-
     established domain (reputation.py) becomes "uncertain" (shown as
-    Suspicious) with uncertain_reason "reputable_domain"."""
-    from .explanations import classify
-    from .reputation import domain_reputation
+    Suspicious) with uncertain_reason "reputable_domain".
+
+    HTTP rule: PhiUSIIL's legitimate class is 100% https://, so the model
+    warns on almost every plain-http:// page. A "Suspicious" http:// URL
+    becomes "legitimate" (legit_reason "http_reputable") only when BOTH the
+    same URL served over HTTPS would score below the Suspicious threshold
+    (below HTTP_RULE_PATH_THRESHOLD if it has a path/query) - missing HTTPS
+    is the only warning signal - AND the domain is reputable
+    (reputation.py: Tranco top HTTP_RULE_MAX_RANK, not a hosting /
+    dynamic-DNS / shortener platform). Phishing verdicts and https:// URLs
+    are never changed."""
+    from .explanations import classify, is_https_only_verdict
+    from .reputation import HTTP_RULE_MAX_RANK, domain_reputation
     result = classify(vec, features, MODEL, PHISH_THRESHOLD, UNCERTAIN_THRESHOLD)
     result["reputation"] = None
+    result["legit_reason"] = None
     if url:
         rep = domain_reputation(url)
         result["reputation"] = rep
         if result["prediction"] == "phishing" and rep["reputable"]:
             result.update(prediction="uncertain", risk="Medium", uncertain_reason="reputable_domain")
+        if (result["prediction"] == "uncertain" and rep["reputable"]
+                and rep["rank"] <= HTTP_RULE_MAX_RANK
+                and url.strip().lower().startswith("http://")
+                and features.get("IsHTTPS") == 0
+                and is_https_only_verdict(vec, MODEL, _http_rule_threshold(url))):
+            result.update(prediction="legitimate", risk="Low", uncertain_reason=None,
+                          legit_reason="http_reputable")
     return result
 
 

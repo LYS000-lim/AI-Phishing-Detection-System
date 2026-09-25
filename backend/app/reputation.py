@@ -37,6 +37,10 @@ _TRANCO_CSV = os.path.join(_ROOT, "top-1m.csv")
 # Domains ranked within this many positions count as "reputable".
 # Chosen with backend/tests/realworld_eval.py (see the report there).
 MAX_RANK = 250_000
+# Stricter cut-off for the HTTP rule (ml_state.classify_vec), which can turn
+# "suspicious" into "legitimate": phishing on 100k-250k ranked domains was
+# mostly free hosting, while ~99% of legit http pages tested rank <= 100k.
+HTTP_RULE_MAX_RANK = 100_000
 
 # Offline: uses tldextract's bundled Public Suffix List snapshot (no
 # network call at runtime).
@@ -122,6 +126,27 @@ HOSTING_PLATFORMS = {
     "justdied.com", "almostmy.com", "jungleheart.com", "mrface.com", "mynetav.com",
     "onmypc.net", "ftp.sh", "youdontcare.com", "ueuo.com", "tftpd.net", "servconfig.com",
     "run.place", "lflink.com", "lflinkup.com", "myftp.info", "easterndns.com",
+    # found by simulating the HTTP rule (ml_state.classify_vec) on all
+    # PhiUSIIL + 2024-25 feed http:// phishing: platforms / shorteners /
+    # dynamic DNS whose user subdomains or links would otherwise count as
+    # reputable
+    "bitly.ws", "bitly.cx", "bitly.com", "bit.do", "lnk.to", "fanlink.to", "me-qr.com",
+    "qr1.be", "qrcodes.pro", "uqr.to", "flowcode.com", "surl.li", "cutt.us", "alturl.com",
+    "tiny.cc", "tiny.one", "tiny.us", "gg.gg", "ppt.cc", "jii.li", "cort.as", "lihi1.com",
+    "abre.ai", "mssg.me", "hopp.bio", "user.fm", "questionpro.com", "simplybook.it",
+    "mjt.lu", "shoprenter.hu", "versacommerce.de", "home.pl", "smarthost.pl", "webd.pl",
+    "myhostpoint.ch", "funpic.de", "kilu.de", "hys.cz", "8u.cz", "clan.su", "ucoz.ru",
+    "ucoz.com", "narod.ru", "do.am", "axc.nl", "ovh.net", "binero.se", "blogsky.com",
+    "flazio.com", "format.com", "atw.hu", "uw.hu", "eoldal.hu", "chez.com", "piczo.com",
+    "t35.com", "biz.nf", "fr.nf", "es.tl", "tr.gg", "eu.cc", "us.cc", "webmo.fr",
+    "westnet.com.au", "seetong.com", "hubside.fr", "univer.se", "phpnet.us", "e-kei.pl",
+    "bee.pl", "5v.pl", "vot.pl", "7m.pl", "dx.am", "cu.ma", "ukit.me", "ct.ws", "x10.bz",
+    "whf.bz", "22web.org", "myfreesites.net", "cleansite.us", "mycpanel.rs", "ferozo.com",
+    "webservis.ru", "h1n.ru", "webador.de", "webnode.be", "finance.blog", "code.blog",
+    "mysch.gr", "dtdns.com", "ddo.jp", "ddnss.ch", "ddns.com.br",
+    "dyndns.dk", "dns1.us", "dns2.us", "dnsrd.com", "ns01.us", "ns01.info", "kro.kr",
+    "o-r.kr", "p-e.kr", "vicp.net", "3322.net", "3322.org", "f3322.org", "oray.com",
+    "ygto.com", "xxuz.com", "6f.sk",
 }
 
 # Specific subdomains of otherwise-reputable companies where users publish
@@ -129,7 +154,7 @@ HOSTING_PLATFORMS = {
 HOSTING_HOSTS = {
     "sites.google.com", "docs.google.com", "drive.google.com", "script.google.com",
     "storage.cloud.google.com", "forms.office.com", "forms.microsoft.com",
-    "onedrive.live.com", "1drv.ms", "sway.office.com", "gamma.app",
+    "onedrive.live.com", "1drv.ms", "sway.office.com", "gamma.app", "sites.sch.gr",
 }
 
 

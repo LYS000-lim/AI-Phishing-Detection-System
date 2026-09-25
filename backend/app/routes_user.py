@@ -343,6 +343,27 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             "This is shown as suspicious rather than a confirmed phishing "
             "result, since many legitimate sites still don't use HTTPS.",
         ]
+    elif verdict["legit_reason"] == "http_reputable":
+        # Plain-http page on a well-established domain whose only warning
+        # signal was the missing HTTPS (ml_state.classify_vec HTTP rule).
+        rep = verdict["reputation"]
+        why_detected = [
+            f"The registered domain {rep['domain']} is a well-established website "
+            f"(Tranco rank #{rep['rank']:,}).",
+            "The only warning signal for this URL is the missing HTTPS connection: "
+            "the same address served over HTTPS scores as legitimate.",
+        ]
+        evidence = build_evidence("legitimate", features, shap_out, lime_out, limit=3)
+        plain = (
+            f"Legitimate. This page belongs to {rep['domain']}, a well-established "
+            "website, and shows no phishing pattern other than using plain HTTP. "
+            "The connection is not encrypted, so avoid entering passwords or "
+            "payment details unless the page switches to https://."
+        )
+        security_analysis = [
+            "No phishing indicators were found apart from the missing HTTPS connection.",
+            "HTTP pages are not encrypted: data you type can be read in transit.",
+        ]
     else:
         why_detected = build_reason_bullets(
             prediction,
@@ -373,6 +394,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         "risk_level": risk,
         "confidence": round(verdict["confidence"], 4),
         "uncertain_reason": verdict["uncertain_reason"],
+        "legit_reason": verdict["legit_reason"],
         "reputation": verdict["reputation"],
         "phishing_probability": round(p_phish, 4),
         "legitimate_probability": round(1 - p_phish, 4),
