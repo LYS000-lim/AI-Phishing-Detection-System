@@ -17,6 +17,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     const scan = store.lastScan;
     const isPhishing = scan.prediction === "phishing";
     const isUncertain = scan.prediction === "uncertain";
+    // A rule after the model decided the verdict (domain reputation / HTTPS
+    // check), so the raw score is a URL-pattern score, not a probability of
+    // the verdict shown.
+    const overridden = ["reputable_domain", "https_only"].includes(scan.uncertain_reason)
+        || scan.legit_reason === "http_reputable";
     const statusBadgeClass = isPhishing ? "danger" : isUncertain ? "risk-medium" : "safe";
     const statusText = isPhishing ? "PHISHING" : isUncertain ? "SUSPICIOUS" : "SAFE";
     const attack = scan.attack_type || {};
@@ -43,12 +48,13 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </span>
             </span>
         </div>
+        ${overridden ? "" : `
         <div class="pg-row">
             <span class="pg-label">Confidence</span>
             <span class="pg-value">${pgPct(scan.confidence)}</span>
-        </div>
+        </div>`}
         <div class="pg-row">
-            <span class="pg-label">Phishing Probability</span>
+            <span class="pg-label">${overridden ? "URL Pattern Score" : "Phishing Probability"}</span>
             <span class="pg-value">${pgPct(scan.phishing_probability)}</span>
         </div>
         ${isPhishing ? `

@@ -7,9 +7,16 @@ const pct = (value) => `${((value ?? 0) * 100).toFixed(1)}%`
 // since the model picks the higher-probability class) into a plain-language
 // label + short explanation, so users see "Medium" instead of just "58%".
 // Display-only — does not change the underlying probability or verdict.
-const confidenceInfo = (value, prediction, uncertainReason) => {
+const confidenceInfo = (value, prediction, uncertainReason, legitReason) => {
   const value100 = (value ?? 0) * 100
   const noun = prediction === 'phishing' ? 'phishing' : 'legitimate'
+
+  if (legitReason === 'http_reputable') {
+    return {
+      label: 'Medium',
+      text: 'The URL pattern score is high only because the site uses plain HTTP. The domain is well established and the same address over HTTPS scores as legitimate, so it is treated as legitimate - but the connection is not encrypted.',
+    }
+  }
 
   if (prediction === 'uncertain') {
     return {
@@ -196,6 +203,16 @@ export default function Scanner({ scanFn = scanURL }) {
   const isUncertain = Boolean(result) && !isTrusted && result.prediction === 'uncertain'
   const isBorderline = isUncertain && result.uncertain_reason === 'borderline'
   const isReputable = isUncertain && result.uncertain_reason === 'reputable_domain'
+  const isHttpsOnly = isUncertain && result.uncertain_reason === 'https_only'
+  const isHttpReputable = Boolean(result) && !isTrusted && result.legit_reason === 'http_reputable'
+  // A rule after the model decided the verdict, so the raw model score is
+  // a URL-pattern score, not the probability of the final verdict.
+  const isOverridden = isReputable || isHttpsOnly || isHttpReputable
+  const overrideNote = isReputable
+    ? `Final verdict capped by domain reputation (Tranco #${result?.reputation?.rank?.toLocaleString()})`
+    : isHttpReputable
+    ? 'Final verdict from the HTTP check + domain reputation'
+    : 'Final verdict softened: missing HTTPS is the main signal'
   const rep = result?.reputation
   const isLegitimate = Boolean(result) && !isTrusted && result.prediction === 'legitimate'
   const riskClass = result?.risk_level?.toLowerCase() || 'low'
@@ -285,29 +302,39 @@ export default function Scanner({ scanFn = scanURL }) {
             </div>
           ) : (
             <div className="result-metrics">
-              <div className="metric-card">
-                <span className="metric-label">Phishing Probability</span>
-                <strong>{pct(result.phishing_probability)}</strong>
-              </div>
-              <div className="metric-card">
-                <span className="metric-label">Legitimate Probability</span>
-                <strong>{pct(result.legitimate_probability)}</strong>
-              </div>
+              {isOverridden ? (
+                <div className="metric-card">
+                  <span className="metric-label">URL Pattern Score</span>
+                  <strong>{pct(result.phishing_probability)}</strong>
+                  <span className="metric-sub">{overrideNote}</span>
+                </div>
+              ) : (
+                <>
+                  <div className="metric-card">
+                    <span className="metric-label">Phishing Probability</span>
+                    <strong>{pct(result.phishing_probability)}</strong>
+                  </div>
+                  <div className="metric-card">
+                    <span className="metric-label">Legitimate Probability</span>
+                    <strong>{pct(result.legitimate_probability)}</strong>
+                  </div>
+                </>
+              )}
               <div className="metric-card">
                 <span className="metric-label">Model Used</span>
                 <strong>{result.model_used}</strong>
               </div>
               <div className="metric-card">
                 <span className="metric-label">Confidence</span>
-                <strong>{confidenceInfo(result.confidence, result.prediction, result.uncertain_reason).label}</strong>
-                <span className="metric-sub">{pct(result.confidence)}</span>
+                <strong>{confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason).label}</strong>
+                {!isOverridden && <span className="metric-sub">{pct(result.confidence)}</span>}
               </div>
             </div>
           )}
 
           {!isTrusted && (
             <p className="confidence-note">
-              {confidenceInfo(result.confidence, result.prediction, result.uncertain_reason).text}
+              {confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason).text}
             </p>
           )}
 
@@ -345,8 +372,7 @@ export default function Scanner({ scanFn = scanURL }) {
                   <div className="rec-label">Low-confidence result</div>
                   {isReputable ? (
                   <div>
-                    The address pattern resembles phishing
-                    ({pct(result.phishing_probability)} phishing score), but it belongs
+                    The address pattern resembles phishing, but it belongs
                     to <strong>{rep?.domain}</strong>, a well-established website (ranked
                     #{rep?.rank?.toLocaleString()} globally). This is <strong>not a confirmed
                     phishing detection</strong> – make sure the domain is exactly {rep?.domain}{' '}
@@ -355,7 +381,7 @@ export default function Scanner({ scanFn = scanURL }) {
                   ) : (
                   <div>
                     The AI model is not certain about this URL
-                    ({pct(result.phishing_probability)} phishing score).{' '}
+                    {isBorderline ? ` (${pct(result.phishing_probability)} phishing score)` : ''}.{' '}
                     {isBorderline
                       ? 'Some URL characteristics resemble phishing, but not strongly enough to confirm it.'
                       : 'It was flagged mainly because the site does not use a secure HTTPS connection.'}

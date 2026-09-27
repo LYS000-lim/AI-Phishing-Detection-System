@@ -134,6 +134,7 @@ def _predict_and_log(
         "model_used": model_info()["name"],
         "trusted_domain": False,
         "uncertain_reason": verdict["uncertain_reason"],
+        "legit_reason": verdict["legit_reason"],
         "reputation": verdict["reputation"],
         "features": features,
         "attack_type": attack_type,
@@ -280,8 +281,8 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         )
         evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
         plain = (
-            f"Suspicious. The address pattern resembles phishing ({p_phish:.0%} "
-            f"phishing score), but it belongs to {rep['domain']}, a well-established "
+            "Suspicious. The address pattern resembles phishing, but it belongs "
+            f"to {rep['domain']}, a well-established "
             f"website (ranked #{rep['rank']:,} globally), so it is not treated as "
             "confirmed phishing. Make sure the domain is exactly "
             f"{rep['domain']} before entering passwords or payment details."
@@ -331,8 +332,8 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         ]
         evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
         plain = (
-            f"Suspicious (low-confidence result, {p_phish:.0%} phishing score). "
-            "The score is driven mainly by the lack of an HTTPS connection, which "
+            "Suspicious (low-confidence result). The model's score is driven "
+            "mainly by the lack of an HTTPS connection, which "
             "is a real but not conclusive risk signal. This is not a confirmed "
             "phishing detection - check the domain name carefully before "
             "entering passwords or payment details."

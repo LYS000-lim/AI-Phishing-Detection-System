@@ -6,6 +6,13 @@ domain, subdomain, path, query string, hyphens, digits, unusual TLD, HTTP,
 IP, typosquat) so a retrain's impact can be checked per-category, not just
 on a handful of anecdotal URLs.
 
+Reports two things per category:
+  raw model  - model.predict_proba at the plain 0.5 cut-off (model quality)
+  live app   - what users actually see: allowlist -> model with tuned
+               thresholds -> reputation cap -> HTTP rule (ml_state.classify_vec)
+Quote the live-app numbers for system behaviour; the raw numbers only show
+how much the post-model layers are compensating for.
+
 Run: python backend/tests/fp_category_tests.py
 Saves: outputs/manual_test_results.csv (per-URL) + prints per-category summary.
 Label convention: 0 = legitimate, 1 = phishing (matches app/features.py).
@@ -20,8 +27,9 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from app.explanations import classify
-from app.features import URL_ONLY_FEATURES, compute_features
+from app.allowlist import is_trusted
+from app.features import URL_ONLY_FEATURES, compute_features, extract_features, feature_vector
+from app.ml_state import PHISH_THRESHOLD, UNCERTAIN_THRESHOLD, classify_vec
 
 TEST_CASES = {
     # NOTE: none of the "legit" URLs below are in app/allowlist.py's
@@ -96,33 +104,27 @@ TEST_CASES = {
 }
 
 
+def live_verdict(url):
+    """The verdict the website/extension shows for this URL."""
+    if is_trusted(url):
+        return "legitimate"
+    return classify_vec(feature_vector(url), extract_features(url), url)["prediction"]
+
+
 def main():
     outputs_dir = os.path.join(ROOT, "outputs")
     tld_lookup = joblib.load(os.path.join(outputs_dir, "tld_probability_lookup.joblib"))
     char_lookup = joblib.load(os.path.join(outputs_dir, "char_probability_lookup.joblib"))
     model = joblib.load(os.path.join(outputs_dir, "deployment_model.joblib"))
-    thresholds = joblib.load(os.path.join(outputs_dir, "deployment_metrics.joblib")).get("thresholds", {})
-    t_phish = float(thresholds.get("phishing", 0.5))
-    t_unc = float(thresholds.get("uncertain", t_phish))
-    print(f"Thresholds: phishing>={t_phish}, uncertain>={t_unc}")
+    print(f"Thresholds: phishing>={PHISH_THRESHOLD}, suspicious>={UNCERTAIN_THRESHOLD}")
 
     rows = []
     for category, cases in TEST_CASES.items():
         for url, expected in cases:
             feats = compute_features(url, tld_lookup, char_lookup)
-            fv = [[feats[n] for n in URL_ONLY_FEATURES]]
-            fv_arr = np.array(fv)
-            p_phish = float(model.predict_proba(fv)[0][1])
+            p_phish = float(model.predict_proba([[feats[n] for n in URL_ONLY_FEATURES]])[0][1])
             pred = int(p_phish >= 0.5)
-
-            # Mirrors routes_user.py/routes_extension.py: a raw "phishing"
-            # call driven entirely by the missing-HTTPS signal is what the
-            # live app actually shows as a neutral "uncertain" verdict, not
-            # a hard phishing accusation -- reflected here so a "wrong" row
-            # below isn't misread as an unfixed false-positive when the API
-            # layer already softens it.
-            api_verdict = classify(fv_arr, feats, model, t_phish, t_unc)["prediction"]
-
+            live = live_verdict(url)
             rows.append({
                 "category": category,
                 "url": url,
@@ -130,7 +132,11 @@ def main():
                 "predicted": pred,
                 "p_phish": round(p_phish, 3),
                 "correct": pred == expected,
-                "api_verdict": api_verdict,
+                "live_verdict": live,
+                # Legit: correct only if shown Legitimate. Phishing: correct
+                # only if shown Phishing (Suspicious is a warning, not a catch).
+                "live_correct": live == ("phishing" if expected == 1 else "legitimate"),
+                "live_warned": live != "legitimate",
             })
 
     results = pd.DataFrame(rows)
@@ -138,24 +144,24 @@ def main():
     results.to_csv(out_path, index=False)
 
     summary = results.groupby("category").agg(
-        n=("correct", "size"), accuracy=("correct", "mean")
+        n=("correct", "size"), raw_accuracy=("correct", "mean"),
+        live_accuracy=("live_correct", "mean"),
     ).round(3)
-    overall_acc = results["correct"].mean()
-
     print(summary)
-    print(f"\nOverall: {len(results)} URLs, accuracy={overall_acc:.3f}")
+
+    legit, phish = results[results.expected == 0], results[results.expected == 1]
+    print(f"\nRaw model @0.5: {len(results)} URLs, accuracy={results['correct'].mean():.3f}")
+    print(f"Live app:       accuracy={results['live_correct'].mean():.3f} | "
+          f"legit shown Phishing {int((legit.live_verdict == 'phishing').sum())}/{len(legit)}, "
+          f"legit shown Suspicious {int((legit.live_verdict == 'uncertain').sum())}/{len(legit)} | "
+          f"phishing shown Phishing {int((phish.live_verdict == 'phishing').sum())}/{len(phish)}, "
+          f"any warning {int(phish.live_warned.sum())}/{len(phish)}")
     print(f"Saved: {out_path}")
 
-    wrong = results[~results["correct"]]
+    wrong = results[~results["live_correct"]]
     if len(wrong):
-        softened = wrong[wrong["api_verdict"] == "uncertain"]
-        hard_wrong = wrong[wrong["api_verdict"] != "uncertain"]
-        if len(hard_wrong):
-            print("\nMisclassified (shown as a hard phishing/legitimate verdict in the live app):")
-            print(hard_wrong[["category", "url", "expected", "predicted", "p_phish"]].to_string(index=False))
-        if len(softened):
-            print("\nRaw-model miss, but softened to 'uncertain' (not a hard accusation) in the live app:")
-            print(softened[["category", "url", "expected", "predicted", "p_phish"]].to_string(index=False))
+        print("\nNot shown with the expected verdict in the live app:")
+        print(wrong[["category", "url", "expected", "p_phish", "live_verdict"]].to_string(index=False))
 
 
 if __name__ == "__main__":

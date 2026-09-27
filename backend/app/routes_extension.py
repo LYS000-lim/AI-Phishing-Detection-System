@@ -132,6 +132,7 @@ def extension_scan(
             "model_used": model_info()["name"],
             "trusted_domain": False,
             "uncertain_reason": uncertain_reason,
+            "legit_reason": verdict["legit_reason"],
             "reputation": verdict["reputation"],
             "attack_type": attack_type,
         }
