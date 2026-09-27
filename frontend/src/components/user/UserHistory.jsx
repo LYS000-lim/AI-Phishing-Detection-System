@@ -1,16 +1,7 @@
 import { useEffect, useState } from 'react'
 import { utcDate } from '../../dates.js'
 import DateRangeFilter from '../DateRangeFilter.jsx'
-import { myDetections, myReports } from '../../api.js'
-
-// A "Reason" column full of paragraph-length text is unreadable in a table;
-// show a short label and let the user open the full text on demand (same
-// pattern as the admin's Blacklist Database page).
-const shortReason = (reason) => {
-  if (!reason) return null
-  const firstSentence = reason.split(/(?<=[.!?])\s/)[0]
-  return firstSentence.length <= 60 ? firstSentence : `${reason.slice(0, 57)}…`
-}
+import { myDetections } from '../../api.js'
 
 export default function UserHistory() {
   const [history, setHistory] = useState([])
@@ -24,10 +15,6 @@ export default function UserHistory() {
   const [total, setTotal] = useState(0)
   const pageSize = 20
   const [loadingHist, setLoadingHist] = useState(true)
-
-  const [reports, setReports] = useState([])
-  const [loadingReports, setLoadingReports] = useState(true)
-  const [viewing, setViewing] = useState(null)
 
   const loadHistory = () => {
     setLoadingHist(true)
@@ -43,13 +30,6 @@ export default function UserHistory() {
     loadHistory()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, risk, page])
-
-  useEffect(() => {
-    setLoadingReports(true)
-    myReports()
-      .then(setReports)
-      .finally(() => setLoadingReports(false))
-  }, [])
 
   const totalPages = Math.ceil(total / pageSize)
 
@@ -143,65 +123,6 @@ export default function UserHistory() {
         )}
       </section>
 
-      <div className="page-header" style={{ marginTop: 8 }}>
-        <h2 style={{ fontSize: 20 }}>My Reported URLs</h2>
-        <p className="tagline">
-          URLs you personally reported from a scan result. Admins see every
-          user's reports on the Blacklist Database page - this is only yours.
-        </p>
-      </div>
-
-      <section className="panel">
-        {loadingReports ? (
-          <p className="empty">Loading…</p>
-        ) : reports.length === 0 ? (
-          <p className="empty">You haven't reported any URLs yet.</p>
-        ) : (
-          <table className="hist">
-            <thead>
-              <tr>
-                <th>URL</th>
-                <th>Attack Type</th>
-                <th>Detection Reason</th>
-                <th>Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {reports.map((r) => (
-                <tr key={r.id}>
-                  <td className="mono ellip">{r.url}</td>
-                  <td>{r.attack_type || '-'}</td>
-                  <td>
-                    {r.detection_reason ? (
-                      <>
-                        {shortReason(r.detection_reason)}{' '}
-                        <button className="link-btn" onClick={() => setViewing(r)}>View</button>
-                      </>
-                    ) : '-'}
-                  </td>
-                  <td>{utcDate(r.created_at).toLocaleString('en-GB')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      {viewing && (
-        <div className="modal-backdrop" onClick={() => setViewing(null)}>
-          <div className="modal panel" onClick={(e) => e.stopPropagation()}>
-            <h3>Detection Reason</h3>
-            <dl className="details">
-              <dt>URL</dt><dd className="mono">{viewing.url}</dd>
-              <dt>Attack type</dt><dd>{viewing.attack_type || '-'}</dd>
-            </dl>
-            <p style={{ marginTop: 0 }}>{viewing.detection_reason}</p>
-            <div className="modal-actions">
-              <button className="scan-btn small" onClick={() => setViewing(null)}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   )
 }

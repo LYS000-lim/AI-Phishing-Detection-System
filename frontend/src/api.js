@@ -65,7 +65,6 @@ export const reportURL = (payload) =>
     method: 'POST',
     body: payload,
   })
-export const myReports = () => request('/api/my-reports')
 export const myBlockedURLs = () => request('/api/my-blocked-urls')
 export const unblockURL = (id) => request(`/api/my-blocked-urls/${id}`, { method: 'DELETE' })
 

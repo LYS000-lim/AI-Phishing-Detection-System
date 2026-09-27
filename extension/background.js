@@ -85,6 +85,19 @@ async function isLocallyBlocked(url) {
     return list.some((entry) => (entry.hostname || hostnameOf(entry.url)) === host);
 }
 
+// Drops the local copy of a domain the user unblocked on the website, so the
+// block doesn't come back if they later sign out (a block made while signed
+// in is saved both locally and to the account).
+async function removeLocalBlock(url) {
+    const host = hostnameOf(url);
+    const store = await chrome.storage.local.get("userBlockedUrls");
+    const list = store.userBlockedUrls || [];
+    const kept = list.filter((entry) => (entry.hostname || hostnameOf(entry.url)) !== host);
+    if (kept.length !== list.length) {
+        await chrome.storage.local.set({ userBlockedUrls: kept });
+    }
+}
+
 async function addLocalBlock(url) {
     const hostname = hostnameOf(url);
     const store = await chrome.storage.local.get("userBlockedUrls");
@@ -284,6 +297,13 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
                     "This website was previously reported and confirmed as phishing.",
             });
             return;
+        }
+        // The account (not this browser) is the source of truth while
+        // signed in: not blocked there means it was unblocked on the website.
+        // user_checked guards against an expired token, where the server
+        // answered as signed-out and never looked at the account.
+        if (signedIn && blacklist.user_checked === true) {
+            await removeLocalBlock(url);
         }
     } catch (error) {
         console.error("PhishGuard blacklist check failed:", error);

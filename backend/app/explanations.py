@@ -449,7 +449,7 @@ FEATURE_CLAUSES = {
     "DomainLength": ("a longer-than-usual domain name", "a typical domain length"),
     "NoOfLettersInURL": ("an unusually high letter count", "a typical letter count"),
     "LetterRatioInURL": ("an unusual letter-to-symbol ratio", "a normal letter-to-symbol ratio"),
-    "NoOfDegitsInURL": ("extra digits in the address", "very few digits in the address"),
+    "NoOfDegitsInURL": ("digits in the address", "very few digits in the address"),
     "DegitRatioInURL": ("a higher-than-usual share of digits", "a normal, low share of digits"),
     "TLDLegitimateProb": ("a domain suffix rarely seen on legitimate sites", "a domain suffix commonly seen on legitimate sites"),
     "TLDLength": ("an unusual domain-suffix length", "a standard domain-suffix length"),
@@ -469,8 +469,15 @@ FEATURE_CLAUSES = {
 }
 
 
-def _feature_clause(feature: str, prediction: str) -> str:
+def _feature_clause(feature: str, prediction: str, value=None) -> str:
     """Short clause describing a feature's direction for the combined-signal sentence."""
+    # Value-aware wording where the generic clause would overstate it
+    # (one subdomain is not "multiple subdomains").
+    if feature == "NoOfSubDomain" and prediction == "phishing" and value is not None:
+        try:
+            return "an extra subdomain" if int(value) <= 1 else "multiple subdomains"
+        except (TypeError, ValueError):
+            pass
     phishing_clause, legitimate_clause = FEATURE_CLAUSES.get(
         feature,
         (
@@ -485,11 +492,16 @@ def _combined_signal_sentence(
     prediction: str,
     top_contributions: Iterable[dict],
     limit: int = 3,
+    features: dict | None = None,
+    lead: bool = False,
 ) -> str:
     """
     One readable sentence synthesizing several supporting ML signals, instead of
     a raw-value bullet per feature. Numbers/thresholds still live in the
     Evidence cards below — this sentence only names the pattern.
+
+    lead=True when this sentence is the first bullet, so it doesn't say the
+    decision was "also" reinforced by something that isn't shown.
     """
     want_positive = prediction == "phishing"
     clauses: list[str] = []
@@ -506,7 +518,7 @@ def _combined_signal_sentence(
         if not supports_prediction:
             continue
 
-        clause = _feature_clause(feature, prediction)
+        clause = _feature_clause(feature, prediction, (features or {}).get(feature))
         if clause in seen:
             continue
         seen.add(clause)
@@ -523,13 +535,17 @@ def _combined_signal_sentence(
     # no title, so that pattern must not appear inside it.
     joined = _english_join(clauses)
     if prediction == "phishing":
+        opening = (
+            "The model's decision was driven by structural signals such as"
+            if lead else
+            "The model's decision was also reinforced by structural signals such as"
+        )
         return (
-            f"The model's decision was also reinforced by structural signals such "
-            f"as {joined}, patterns it learned from confirmed phishing examples "
-            "during training."
+            f"{opening} {joined}, patterns it learned from confirmed phishing "
+            "examples during training."
         )
     return (
-        f"The model also found supporting structural signals such as {joined}, "
+        f"The model found supporting structural signals such as {joined}, "
         "patterns commonly seen on legitimate websites during training."
     )
 
@@ -646,7 +662,9 @@ TECHNIQUE_SUMMARY_CLAUSES = {
         "generated addresses."
     ),
     "Suspicious URL Pattern": (
-        "Additional URL characteristics reinforced the phishing prediction."
+        "No specific attack technique (brand misuse, typosquatting, IP "
+        "hosting, obfuscation) was found, so this verdict rests on the "
+        "overall URL structure rather than one obvious red flag."
     ),
 }
 
@@ -687,7 +705,12 @@ def build_reason_bullets(
         bullets = _technique_summary_bullets(attack_analysis, limit=max(limit - 1, 1))
 
         if len(bullets) < limit:
-            summary = _combined_signal_sentence(prediction, top_contributions, limit=3)
+            # "Suspicious URL Pattern" says no technique was found, so the
+            # signal sentence is the real lead there, not an "also".
+            lead = not bullets or (attack_analysis or {}).get("techniques") == ["Suspicious URL Pattern"]
+            summary = _combined_signal_sentence(
+                prediction, top_contributions, limit=3, features=features, lead=lead,
+            )
             if summary:
                 bullets.append(summary)
 
@@ -701,7 +724,9 @@ def build_reason_bullets(
         return bullets[:limit]
 
     # Legitimate: one narrative sentence rather than a per-feature bullet list.
-    summary = _combined_signal_sentence(prediction, top_contributions, limit=4)
+    summary = _combined_signal_sentence(
+        prediction, top_contributions, limit=4, features=features, lead=True,
+    )
     if summary:
         return [summary]
 

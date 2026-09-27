@@ -353,7 +353,13 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             "The only warning signal for this URL is the missing HTTPS connection: "
             "the same address served over HTTPS scores as legitimate.",
         ]
-        evidence = build_evidence("legitimate", features, shap_out, lime_out, limit=3)
+        # Show the missing-HTTPS signal the text refers to, then the
+        # strongest legitimate signals.
+        https_card = [
+            e for e in build_evidence("phishing", features, shap_out, lime_out, limit=len(shap_out))
+            if e["feature"] == "IsHTTPS"
+        ]
+        evidence = https_card + build_evidence("legitimate", features, shap_out, lime_out, limit=3 - len(https_card))
         plain = (
             f"Legitimate. This page belongs to {rep['domain']}, a well-established "
             "website, and shows no phishing pattern other than using plain HTTP. "

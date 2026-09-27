@@ -198,7 +198,9 @@ def check_blacklist(
     )
 
     if not entry:
-        return {"blocked": False}
+        # user_checked tells the extension the account block list was really
+        # consulted (valid token), so it may drop a stale local copy.
+        return {"blocked": False, "user_checked": user is not None}
 
     return {
         "blocked": True,

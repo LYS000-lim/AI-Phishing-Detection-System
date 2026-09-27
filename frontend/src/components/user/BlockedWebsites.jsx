@@ -20,6 +20,9 @@ export default function BlockedWebsites() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Deletes the block from the account; the row disappears from this table
+  // and the signed-in extension stops blocking the domain on the next visit
+  // (it checks the account block list server-side on every navigation).
   const unblock = async (row) => {
     if (!confirm(`Unblock ${row.hostname}? The extension will scan it normally again.`)) return
     try {
@@ -83,7 +86,7 @@ export default function BlockedWebsites() {
         ) : (
           <table className="hist">
             <thead>
-              <tr><th>Date Blocked</th><th>Domain</th><th>URL</th><th>Attack Type</th><th></th></tr>
+              <tr><th>Date Blocked</th><th>Domain</th><th>URL</th><th></th></tr>
             </thead>
             <tbody>
               {shown.map((b) => (
@@ -91,7 +94,6 @@ export default function BlockedWebsites() {
                   <td>{utcDate(b.created_at).toLocaleString('en-GB')}</td>
                   <td className="mono">{b.hostname}</td>
                   <td className="mono ellip">{b.url}</td>
-                  <td>{b.attack_type || '-'}</td>
                   <td><button className="link-btn" onClick={() => unblock(b)}>Unblock</button></td>
                 </tr>
               ))}
