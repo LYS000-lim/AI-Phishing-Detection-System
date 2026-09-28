@@ -133,6 +133,8 @@ def extension_scan(
             "trusted_domain": False,
             "uncertain_reason": uncertain_reason,
             "legit_reason": verdict["legit_reason"],
+            "escalated_by": verdict["escalated_by"],
+            "brand": verdict["brand"],
             "reputation": verdict["reputation"],
             "attack_type": attack_type,
         }

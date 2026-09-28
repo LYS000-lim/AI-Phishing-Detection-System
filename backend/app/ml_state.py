@@ -70,12 +70,20 @@ def classify_vec(vec, features, url=None):
     is the only warning signal - AND the domain is reputable
     (reputation.py: Tranco top HTTP_RULE_MAX_RANK, not a hosting /
     dynamic-DNS / shortener platform). Phishing verdicts and https:// URLs
-    are never changed."""
+    are never changed.
+
+    Brand rule (brands.py): a known phishing-target brand in the hostname of
+    a domain that is not well established raises the verdict one step -
+    legitimate -> uncertain (uncertain_reason "brand_impersonation"),
+    uncertain -> phishing (escalated_by "brand_impersonation")."""
     from .explanations import classify, is_https_only_verdict
+    from .brands import display_name, impersonated_brand
     from .reputation import HTTP_RULE_MAX_RANK, domain_reputation
     result = classify(vec, features, MODEL, PHISH_THRESHOLD, UNCERTAIN_THRESHOLD)
     result["reputation"] = None
     result["legit_reason"] = None
+    result["escalated_by"] = None
+    result["brand"] = None
     if url:
         rep = domain_reputation(url)
         result["reputation"] = rep
@@ -88,6 +96,15 @@ def classify_vec(vec, features, url=None):
                 and is_https_only_verdict(vec, MODEL, _http_rule_threshold(url))):
             result.update(prediction="legitimate", risk="Low", uncertain_reason=None,
                           legit_reason="http_reputable")
+        brand = impersonated_brand(url)
+        if brand and not rep["reputable"] and result["prediction"] != "phishing":
+            result["brand"] = display_name(brand)
+            if result["prediction"] == "legitimate":
+                result.update(prediction="uncertain", risk="Medium",
+                              uncertain_reason="brand_impersonation", legit_reason=None)
+            else:
+                result.update(prediction="phishing", risk="High", uncertain_reason=None,
+                              escalated_by="brand_impersonation")
     return result
 
 

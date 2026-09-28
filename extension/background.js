@@ -202,7 +202,9 @@ async function announceSafeToast(tabId, result) {
 async function announceUncertainToast(tabId, result) {
     const payload = {
         url: result.url,
-        reason: result.uncertain_reason === "reputable_domain"
+        reason: result.uncertain_reason === "brand_impersonation"
+            ? `Uses the brand name "${result.brand}" on a domain that is not the brand's own. Open ${result.brand} through its official website.`
+            : result.uncertain_reason === "reputable_domain"
             ? `Address pattern resembles phishing, but ${result.reputation?.domain} is a well-established website. Check the domain carefully.`
             : result.uncertain_reason === "borderline"
             ? "Some URL characteristics resemble phishing, but not enough to confirm it."

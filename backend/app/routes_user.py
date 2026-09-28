@@ -135,6 +135,8 @@ def _predict_and_log(
         "trusted_domain": False,
         "uncertain_reason": verdict["uncertain_reason"],
         "legit_reason": verdict["legit_reason"],
+        "escalated_by": verdict["escalated_by"],
+        "brand": verdict["brand"],
         "reputation": verdict["reputation"],
         "features": features,
         "attack_type": attack_type,
@@ -235,6 +237,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
     uncertain_reputable = verdict["uncertain_reason"] == "reputable_domain"
     uncertain_https = verdict["uncertain_reason"] == "https_only"
     uncertain_borderline = verdict["uncertain_reason"] == "borderline"
+    uncertain_brand = verdict["uncertain_reason"] == "brand_impersonation"
 
     # SHAP contributions for class 1 (phishing).
     shap_exp = get_shap_explainer()
@@ -293,6 +296,32 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             "Login, account and payment pages of real services often have "
             "address patterns similar to phishing pages, so a URL-pattern "
             "score alone is not treated as proof for an established domain.",
+        ]
+    elif uncertain_brand:
+        # The model scored the URL as legitimate-looking, but the hostname
+        # uses a brand that phishers target, on a domain that is not the
+        # brand's (not well established) - brands.py rule.
+        brand_name = verdict["brand"]
+        why_detected = [
+            f"The address uses the brand name \"{brand_name}\", but the domain is not "
+            f"one of {brand_name}'s well-established websites.",
+            f"{brand_name} is one of the brands most often impersonated in recent "
+            "phishing campaigns, so a brand name on an unknown domain is treated "
+            "as a caution flag.",
+        ]
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
+        plain = (
+            f"Suspicious. This address uses the brand name \"{brand_name}\" on a domain "
+            f"that is not an established {brand_name} website. It may be an official "
+            "regional or partner site, or an impersonation - check that you reached "
+            f"{brand_name} through its official website before entering passwords or "
+            "payment details."
+        )
+        security_analysis = [
+            f"The domain contains \"{brand_name}\" but is not among the most visited "
+            "websites, which is where a brand's own sites normally rank.",
+            "The URL pattern alone was not enough for a warning; the brand name on "
+            "an unknown domain is what raised this result to suspicious.",
         ]
     elif uncertain_borderline:
         # Score between the tuned "uncertain" and "phishing" thresholds:
@@ -402,6 +431,8 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         "confidence": round(verdict["confidence"], 4),
         "uncertain_reason": verdict["uncertain_reason"],
         "legit_reason": verdict["legit_reason"],
+        "escalated_by": verdict["escalated_by"],
+        "brand": verdict["brand"],
         "reputation": verdict["reputation"],
         "phishing_probability": round(p_phish, 4),
         "legitimate_probability": round(1 - p_phish, 4),

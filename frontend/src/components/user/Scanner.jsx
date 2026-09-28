@@ -7,9 +7,22 @@ const pct = (value) => `${((value ?? 0) * 100).toFixed(1)}%`
 // since the model picks the higher-probability class) into a plain-language
 // label + short explanation, so users see "Medium" instead of just "58%".
 // Display-only — does not change the underlying probability or verdict.
-const confidenceInfo = (value, prediction, uncertainReason, legitReason) => {
+const confidenceInfo = (value, prediction, uncertainReason, legitReason, escalatedBy) => {
   const value100 = (value ?? 0) * 100
   const noun = prediction === 'phishing' ? 'phishing' : 'legitimate'
+
+  if (escalatedBy === 'brand_impersonation') {
+    return {
+      label: 'Medium',
+      text: "The URL pattern alone was borderline; the brand name on a domain that is not the brand's own raised this result to phishing.",
+    }
+  }
+  if (uncertainReason === 'brand_impersonation') {
+    return {
+      label: 'Low',
+      text: "The URL pattern alone looks normal, but it uses a brand name on a domain that is not one of that brand's established websites.",
+    }
+  }
 
   if (legitReason === 'http_reputable') {
     return {
@@ -205,10 +218,14 @@ export default function Scanner({ scanFn = scanURL }) {
   const isReputable = isUncertain && result.uncertain_reason === 'reputable_domain'
   const isHttpsOnly = isUncertain && result.uncertain_reason === 'https_only'
   const isHttpReputable = Boolean(result) && !isTrusted && result.legit_reason === 'http_reputable'
+  const isBrand = isUncertain && result.uncertain_reason === 'brand_impersonation'
+  const isBrandEscalated = isPhish && result.escalated_by === 'brand_impersonation'
   // A rule after the model decided the verdict, so the raw model score is
   // a URL-pattern score, not the probability of the final verdict.
-  const isOverridden = isReputable || isHttpsOnly || isHttpReputable
-  const overrideNote = isReputable
+  const isOverridden = isReputable || isHttpsOnly || isHttpReputable || isBrand || isBrandEscalated
+  const overrideNote = isBrand || isBrandEscalated
+    ? `Verdict raised: "${result?.brand}" used on a domain that is not the brand's own`
+    : isReputable
     ? `Final verdict capped by domain reputation (Tranco #${result?.reputation?.rank?.toLocaleString()})`
     : isHttpReputable
     ? 'Final verdict from the HTTP check + domain reputation'
@@ -326,7 +343,7 @@ export default function Scanner({ scanFn = scanURL }) {
               </div>
               <div className="metric-card">
                 <span className="metric-label">Confidence</span>
-                <strong>{confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason).label}</strong>
+                <strong>{confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by).label}</strong>
                 {!isOverridden && <span className="metric-sub">{pct(result.confidence)}</span>}
               </div>
             </div>
@@ -334,7 +351,7 @@ export default function Scanner({ scanFn = scanURL }) {
 
           {!isTrusted && (
             <p className="confidence-note">
-              {confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason).text}
+              {confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by).text}
             </p>
           )}
 
@@ -370,7 +387,15 @@ export default function Scanner({ scanFn = scanURL }) {
                 <span className="rec-icon" aria-hidden>ℹ</span>
                 <div>
                   <div className="rec-label">Low-confidence result</div>
-                  {isReputable ? (
+                  {isBrand ? (
+                  <div>
+                    This address uses the brand name <strong>{result.brand}</strong> on a
+                    domain that is not an established {result.brand} website. It may be a
+                    regional or partner site, or an impersonation. This is <strong>not a
+                    confirmed phishing detection</strong> – open {result.brand} through its
+                    official website before entering passwords or payment details.
+                  </div>
+                  ) : isReputable ? (
                   <div>
                     The address pattern resembles phishing, but it belongs
                     to <strong>{rep?.domain}</strong>, a well-established website (ranked
@@ -569,7 +594,9 @@ export default function Scanner({ scanFn = scanURL }) {
             <h3>Why is this URL marked suspicious?</h3>
             <p className="section-intro">
               This URL was <strong>not classified as confirmed phishing</strong> —
-              {isReputable
+              {isBrand
+                ? ` it uses the brand name "${result?.brand}" on a domain that is not the brand's own, so these signals are treated as caution flags rather than proof:`
+                : isReputable
                 ? ` its address pattern resembles phishing, but ${rep?.domain} is a well-established website, so these signals are treated as caution flags rather than proof:`
                 : isBorderline
                 ? ' its phishing score is in the borderline range, so these signals are treated as caution flags rather than proof:'
