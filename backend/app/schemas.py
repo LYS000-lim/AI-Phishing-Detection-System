@@ -210,6 +210,7 @@ class ReportedURLOut(BaseModel):
     url: str
     attack_type: Optional[str] = None
     detection_reason: Optional[str] = None
+    status: str = "pending"
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

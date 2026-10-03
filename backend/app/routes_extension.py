@@ -189,9 +189,14 @@ def check_blacklist(
             return {
                 "blocked": True,
                 "by_user": True,
+                "blocked_by": "user",
+                "platform": "PhishGuard Chrome Extension",
                 "domain": domain,
-                "risk_level": "High",
-                "reason": "You previously chose to block this website.",
+                "risk_level": own.risk_level or "High",
+                "attack_type": own.attack_type,
+                "reason": own.reason,
+                "blocked_at": own.created_at,
+                "user_checked": True,
             }
 
     entry = (
@@ -207,9 +212,17 @@ def check_blacklist(
 
     return {
         "blocked": True,
+        "blocked_by": "admin",
+        # The admin approves the block on the PhishGuard website; source is
+        # where the original report was made.
+        "platform": "PhishGuard Admin Blacklist",
+        "reported_via": entry.source,
         "domain": entry.domain,
         "risk_level": entry.risk_level,
+        "attack_type": entry.attack_type,
         "reason": entry.reason,
+        "blocked_at": entry.created_at,
+        "user_checked": user is not None,
     }
 
 
@@ -218,7 +231,8 @@ def check_blacklist(
 # ==========================================================
 
 def _save_user_block(db: Session, user: User, url: str, attack_type: Optional[str],
-                     blocked_at: Optional[datetime] = None) -> bool:
+                     blocked_at: Optional[datetime] = None,
+                     risk_level: Optional[str] = None, reason: Optional[str] = None) -> bool:
     host = _hostname(url)
     if not host:
         return False
@@ -229,7 +243,9 @@ def _save_user_block(db: Session, user: User, url: str, attack_type: Optional[st
     )
     if exists:
         return False
-    row = UserBlockedURL(user_id=user.id, url=url, hostname=host, attack_type=attack_type)
+    row = UserBlockedURL(user_id=user.id, url=url, hostname=host, attack_type=attack_type,
+                         risk_level=(risk_level or None) and str(risk_level)[:8],
+                         reason=reason or None)
     if blocked_at is not None:
         row.created_at = blocked_at
     db.add(row)
@@ -246,7 +262,9 @@ def add_user_block(
     url = (payload.get("url") or "").strip()
     if not url:
         raise HTTPException(400, "URL is required")
-    added = _save_user_block(db, user, url, payload.get("attack_type"))
+    added = _save_user_block(db, user, url, payload.get("attack_type"),
+                             risk_level=payload.get("risk_level"),
+                             reason=payload.get("reason"))
     db.commit()
     return {"saved": added}
 
@@ -267,7 +285,8 @@ def sync_user_blocks(
         blocked_at = None
         if isinstance(entry.get("time"), (int, float)):
             blocked_at = datetime.fromtimestamp(entry["time"] / 1000, timezone.utc).replace(tzinfo=None)
-        if url and _save_user_block(db, user, url, None, blocked_at):
+        if url and _save_user_block(db, user, url, entry.get("attack_type"), blocked_at,
+                                    entry.get("risk_level"), entry.get("reason")):
             added += 1
             db.flush()
     db.commit()

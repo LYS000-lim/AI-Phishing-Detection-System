@@ -67,6 +67,8 @@ export const reportURL = (payload) =>
   })
 export const myBlockedURLs = () => request('/api/my-blocked-urls')
 export const unblockURL = (id) => request(`/api/my-blocked-urls/${id}`, { method: 'DELETE' })
+// Admin: every user's extension blocks (read-only)
+export const adminUserBlockedURLs = () => request('/api/admin/user-blocked-urls')
 
 // ------ Personal history + dashboard ------
 export const myDetections = (
@@ -249,6 +251,13 @@ export const rejectExtensionReport = (id) =>
       method: 'POST',
     }
   )
+
+// Website "Report URL" submissions go through the same review.
+export const approveUserReport = (id) =>
+  request(`/api/admin/user-reports/${id}/approve`, { method: 'POST' })
+
+export const rejectUserReport = (id) =>
+  request(`/api/admin/user-reports/${id}/reject`, { method: 'POST' })
 
 // ------ Admin Blacklist Export ------
 export const exportBlacklistPDF = async (dateFrom = '', dateTo = '') => {

@@ -26,6 +26,7 @@ const UserDashboard = lazy(() => import('./components/user/UserDashboard.jsx'))
 const UserHistory = lazy(() => import('./components/user/UserHistory.jsx'))
 const BrowserExtension = lazy(() => import('./components/user/BrowserExtension.jsx'))
 const BlockedWebsites = lazy(() => import('./components/user/BlockedWebsites.jsx'))
+const Learn = lazy(() => import('./components/Learn.jsx'))
 
 const AdminDashboard = lazy(() => import('./components/admin/AdminDashboard.jsx'))
 const AdminDetectionLogs = lazy(() => import('./components/admin/AdminDetectionLogs.jsx'))
@@ -74,7 +75,9 @@ export default function App() {
             <Route path="/profile" element={<Profile />} />
             <Route path="/history" element={<UserHistory />} />
             <Route path="/browser-extension" element={<BrowserExtension />} />
+            {/* Both roles: own block list (admin also sees all users) + awareness page */}
             <Route path="/blocked-websites" element={<BlockedWebsites />} />
+            <Route path="/learn" element={<Learn />} />
 
             {/* Interfaces 7-10: Admin-only */}
             <Route

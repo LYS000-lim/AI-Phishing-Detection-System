@@ -7,6 +7,7 @@ const userLinks = [
   { to: '/history', label: 'Website Scan History' },
   { to: '/browser-extension', label: 'Browser Extension' },
   { to: '/blocked-websites', label: 'Blocked Websites' },
+  { to: '/learn', label: 'Phishing Awareness' },
   { to: '/profile', label: 'Profile' },
 ]
 
@@ -18,6 +19,8 @@ const adminLinks = [
   { to: '/admin/analytics', label: 'Model Analytics' },
   { to: '/admin/blacklist', label: 'Blacklist Database' },
   { to: '/admin/extension-monitoring', label: 'Extension Monitoring' },
+  { to: '/blocked-websites', label: 'Blocked Websites' },
+  { to: '/learn', label: 'Phishing Awareness' },
   { to: '/profile', label: 'Profile' },
 ]
 

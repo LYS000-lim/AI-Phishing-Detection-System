@@ -37,6 +37,8 @@ def init_db() -> None:
     _ensure_users_login_activity_columns()
     _ensure_reset_attempts_column()
     _ensure_extension_reports_user_column()
+    _ensure_reported_urls_review_columns()
+    _ensure_block_detail_columns()
 
 
 def _ensure_detections_attack_type_column() -> None:
@@ -107,3 +109,41 @@ def _ensure_extension_reports_user_column() -> None:
         if cols and "user_id" not in cols:
             conn.exec_driver_sql("ALTER TABLE extension_reports ADD COLUMN user_id INTEGER")
             conn.commit()
+
+
+def _ensure_reported_urls_review_columns() -> None:
+    """Same self-heal as above, for ReportedURL.status / reviewed_at (website
+    reports now go through the same admin Save / Do Not Save review as
+    extension reports). Existing rows start as 'pending': they were never
+    actually added to the blocklist, so the admin still has to decide."""
+    if not DB_URL.startswith("sqlite"):
+        return
+    with engine.connect() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(reported_urls)")}
+        if cols and "status" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE reported_urls ADD COLUMN status VARCHAR(16) "
+                "NOT NULL DEFAULT 'pending'"
+            )
+            conn.commit()
+        if cols and "reviewed_at" not in cols:
+            conn.exec_driver_sql("ALTER TABLE reported_urls ADD COLUMN reviewed_at DATETIME")
+            conn.commit()
+
+
+def _ensure_block_detail_columns() -> None:
+    """Same self-heal: BlockedURL.source/attack_type and
+    UserBlockedURL.risk_level/reason (block page details)."""
+    if not DB_URL.startswith("sqlite"):
+        return
+    wanted = {
+        "blocked_urls": [("source", "VARCHAR(32)"), ("attack_type", "VARCHAR(64)")],
+        "user_blocked_urls": [("risk_level", "VARCHAR(8)"), ("reason", "TEXT")],
+    }
+    with engine.connect() as conn:
+        for table, columns in wanted.items():
+            cols = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            for name, sql_type in columns:
+                if cols and name not in cols:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+                    conn.commit()

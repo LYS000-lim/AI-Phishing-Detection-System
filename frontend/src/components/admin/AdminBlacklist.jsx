@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react'
 import { utcDate } from '../../dates.js'
 import DateRangeFilter from '../DateRangeFilter.jsx'
-import { adminReportedURLs, exportBlacklistPDF, approveExtensionReport, rejectExtensionReport } from '../../api.js'
+import {
+  adminReportedURLs, exportBlacklistPDF,
+  approveExtensionReport, rejectExtensionReport,
+  approveUserReport, rejectUserReport,
+} from '../../api.js'
 
 // A "Reason" column full of paragraph-length text is unreadable in a table;
 // show a short label and let the admin open the full text on demand.
@@ -55,11 +59,12 @@ export default function AdminBlacklist() {
     }
   }
 
-  const approveReport = async(id)=>{
+  // Row ids are only unique per source, so pick the endpoint by source.
+  const approveReport = async(r)=>{
 
     try{
 
-      await approveExtensionReport(id)
+      await (r.source === "Chrome Extension" ? approveExtensionReport : approveUserReport)(r.id)
 
       load()
 
@@ -72,14 +77,14 @@ export default function AdminBlacklist() {
   }
 
 
-  const rejectReport = async(id)=>{
+  const rejectReport = async(row)=>{
 
     try{
 
-      await rejectExtensionReport(id)
+      await (row.source === "Chrome Extension" ? rejectExtensionReport : rejectUserReport)(row.id)
 
       // Drop the row immediately; load() then refreshes totals/stats.
-      setRows((prev)=>prev.filter((r)=>!(r.source === "Chrome Extension" && r.id === id)))
+      setRows((prev)=>prev.filter((r)=>!(r.source === row.source && r.id === row.id)))
       load()
 
     }catch(e){
@@ -225,13 +230,12 @@ export default function AdminBlacklist() {
                 <td>
 
                 {
-                  r.source === "Chrome Extension" &&
                   r.status === "pending" &&
 
                   <>
                     <button
                       className="link-btn"
-                      onClick={()=>approveReport(r.id)}
+                      onClick={()=>approveReport(r)}
                     >
                       Save in Database
                     </button>
@@ -239,7 +243,7 @@ export default function AdminBlacklist() {
 
                     <button
                       className="link-btn"
-                      onClick={()=>rejectReport(r.id)}
+                      onClick={()=>rejectReport(r)}
                     >
                       Do Not Save in Database
                     </button>

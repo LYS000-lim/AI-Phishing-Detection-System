@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../AuthContext.jsx'
 
 export default function Logout() {
@@ -28,9 +28,6 @@ export default function Logout() {
           <button className="scan-btn" onClick={() => nav('/login')}>
             Log in again
           </button>
-          <Link className="link-btn" to="/login">
-            Return to home
-          </Link>
         </div>
       </div>
     </div>

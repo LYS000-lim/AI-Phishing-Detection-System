@@ -183,7 +183,7 @@
 #pg-leave {
 
     background:
-    #dc2626;
+    #16a34a;
 
     color:
     white;
@@ -450,4 +450,51 @@ body {
     border-radius: 8px;
     margin-top: 10px;
     font-size: 13px;
+}
+
+/* Block page (warning.js renderBlocked) */
+.pg-mono {
+    font-family: Consolas, "Courier New", monospace;
+    word-break: break-all;
+}
+
+.pg-small {
+    font-size: 13px;
+    color: #94a3b8;
+}
+
+.pg-card .pg-blocked-banner .pg-badge {
+    margin: 0 2px;
+}
+
+.pg-unblock-box {
+    margin-top: 15px;
+    background: #0f1f35;
+    border-left: 4px solid #38bdf8;
+    border-radius: 8px;
+    padding: 12px 15px;
+    text-align: left;
+    color: #dbeafe;
+}
+
+.pg-unblock-box p {
+    color: #cbd5e1;
+    margin: 8px 0 0;
+}
+
+.pg-steps {
+    margin: 8px 0 0;
+    padding-left: 20px;
+}
+
+.pg-steps li {
+    margin: 6px 0;
+}
+
+.pg-unblock-box a {
+    color: #7dd3fc;
+}
+
+.pg-footer-note {
+    margin-top: 18px;
 }

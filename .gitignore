@@ -24,3 +24,6 @@ outputs/
 
 # Logs
 *.log
+
+# Local editor/tool settings
+.claude/

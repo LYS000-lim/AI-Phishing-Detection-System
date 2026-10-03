@@ -947,3 +947,55 @@ body {
 }
 
 .extension-card .icon { font-size: 22px; }
+
+/* ------------ Segmented tabs (Blocked Websites admin view, Phishing Awareness) ------------ */
+.seg-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.seg-tabs button {
+  background: var(--panel); color: var(--muted); border: 1px solid var(--border);
+  border-radius: 999px; padding: 7px 14px; font-size: 13px; cursor: pointer;
+}
+.seg-tabs button:hover { color: var(--text); }
+.seg-tabs button.active { background: rgba(56, 189, 248, .15); color: var(--accent); border-color: var(--accent); }
+.small { font-size: 12px; }
+
+/* ------------ Phishing Awareness ------------ */
+.learn-lead { line-height: 1.6; margin: 0 0 14px; }
+.learn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.learn-card {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; text-align: left; color: var(--text); font: inherit;
+}
+.learn-card p { margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.learn-quiz-pick { cursor: pointer; }
+.learn-quiz-pick:hover { border-color: var(--accent); }
+.learn-list { margin: 0; padding-left: 20px; line-height: 1.8; }
+.learn-steps { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 10px; }
+.learn-steps li { background: var(--panel-2); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; }
+.learn-steps p { margin: 4px 0 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.learn-callout {
+  margin-top: 14px; padding: 10px 14px; border-radius: 8px; line-height: 1.5;
+  background: rgba(56, 189, 248, .08); border-left: 3px solid var(--accent);
+}
+.learn-callout.good { background: rgba(16, 185, 129, .1); border-left-color: var(--good); }
+.learn-callout.bad { background: rgba(239, 68, 68, .1); border-left-color: var(--bad); }
+.learn-why { margin: -6px 0 10px; font-size: 13px; }
+.learn-feature { width: 40%; color: var(--accent); word-break: break-word; }
+.learn-dl { margin: 0; display: grid; gap: 10px; }
+.learn-dl dt { font-weight: 600; }
+.learn-dl dd { margin: 2px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.learn-quiz-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.learn-quiz-head h3 { margin-bottom: 8px; }
+.learn-progress { height: 6px; background: var(--panel-2); border-radius: 999px; overflow: hidden; margin-bottom: 16px; }
+.learn-progress div { height: 100%; background: var(--accent); transition: width .2s; }
+.learn-question { font-size: 16px; font-weight: 600; margin: 0 0 6px; word-break: break-word; }
+.learn-options { display: grid; gap: 8px; margin-top: 12px; }
+.learn-option {
+  text-align: left; background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; font: inherit; cursor: pointer;
+}
+.learn-option:hover:not(:disabled) { border-color: var(--accent); }
+.learn-option:disabled { cursor: default; }
+.learn-option.correct { border-color: var(--good); background: rgba(16, 185, 129, .12); }
+.learn-option.wrong { border-color: var(--bad); background: rgba(239, 68, 68, .12); }
+.learn-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+.learn-score { font-size: 32px; font-weight: 700; margin: 0 0 6px; color: var(--accent); }

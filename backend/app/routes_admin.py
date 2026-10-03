@@ -23,7 +23,7 @@ from .ml_state import (
     DT_METRICS, MODEL_LABEL, RF_METRICS,
     global_lime_importance, global_shap_importance, model_info,
 )
-from .models import BlockedURL, Detection, ReportedURL, ExtensionReport, User
+from .models import BlockedURL, Detection, ReportedURL, ExtensionReport, User, UserBlockedURL
 from .phishing_type import detect_brand
 from .routes_user import (
     _feature_distribution, _predict_and_log, _resolve_window, _source_distribution,
@@ -646,7 +646,7 @@ def reported_urls(
                 "attack_type": r.attack_type,
                 "detection_reason": r.detection_reason,
                 "source": "User Report",
-                "status": "approved",
+                "status": r.status,
                 "created_at": r.created_at,
                 "reported_by_name": r.user.full_name if r.user else None,
                 "reported_by_email": r.user.email if r.user else None,
@@ -716,6 +716,10 @@ def reported_urls(
         db.query(ExtensionReport)
         .filter(ExtensionReport.status == "pending")
         .count()
+    ) + (
+        db.query(ReportedURL)
+        .filter(ReportedURL.status == "pending")
+        .count()
     )
     attack_counts = {}
     for r in (*user_reports, *extension_reports):
@@ -741,6 +745,34 @@ def reported_urls(
 # ---------------------------------------------------------------------------
 # Extension Report Approval
 # ---------------------------------------------------------------------------
+
+def _save_to_blocklist(db: Session, url: str, reason: Optional[str],
+                       source: str, attack_type: Optional[str]) -> None:
+    """"Save in Database": this is what actually makes the URL enforced as
+    blocked going forward (see GET /api/extension/check-blacklist). Shared by
+    extension reports and website (User Report) reports."""
+    raw = url.strip()
+    if not raw.lower().startswith(("http://", "https://")):
+        raw = "http://" + raw
+    domain = (urlparse(raw).hostname or "").lower()
+    if not domain:
+        return
+    existing = (
+        db.query(BlockedURL)
+        .filter(BlockedURL.domain == domain)
+        .first()
+    )
+    if not existing:
+        db.add(
+            BlockedURL(
+                url=url,
+                domain=domain,
+                risk_level="High",
+                reason=reason,
+                source=source,
+                attack_type=attack_type,
+            )
+        )
 
 @router.post("/extension-reports/{report_id}/approve")
 def approve_extension_report(
@@ -768,28 +800,8 @@ def approve_extension_report(
         timezone.utc
     ).replace(tzinfo=None)
 
-    # "Save in Database": this is what actually makes the URL enforced as
-    # blocked going forward (see GET /api/extension/check-blacklist).
-    raw = report.url.strip()
-    if not raw.lower().startswith(("http://", "https://")):
-        raw = "http://" + raw
-    domain = (urlparse(raw).hostname or "").lower()
-
-    if domain:
-        existing = (
-            db.query(BlockedURL)
-            .filter(BlockedURL.domain == domain)
-            .first()
-        )
-        if not existing:
-            db.add(
-                BlockedURL(
-                    url=report.url,
-                    domain=domain,
-                    risk_level="High",
-                    reason=report.detection_reason,
-                )
-            )
+    _save_to_blocklist(db, report.url, report.detection_reason,
+                       "Chrome Extension", report.attack_type)
 
     db.commit()
     db.refresh(report)
@@ -832,6 +844,82 @@ def reject_extension_report(
         "id": report_id,
         "status": "removed",
     }
+
+# ---------------------------------------------------------------------------
+# Website (User Report) Approval
+# ---------------------------------------------------------------------------
+
+@router.post("/user-reports/{report_id}/approve")
+def approve_user_report(
+    report_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    report = db.query(ReportedURL).filter(ReportedURL.id == report_id).first()
+    if not report:
+        raise HTTPException(404, "User report not found")
+
+    report.status = "approved"
+    report.reviewed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    _save_to_blocklist(db, report.url, report.detection_reason,
+                       "PhishGuard Website", report.attack_type)
+
+    db.commit()
+    db.refresh(report)
+    return {
+        "message": "User report approved",
+        "id": report.id,
+        "status": report.status,
+    }
+
+
+@router.post("/user-reports/{report_id}/reject")
+def reject_user_report(
+    report_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    report = db.query(ReportedURL).filter(ReportedURL.id == report_id).first()
+    if not report:
+        raise HTTPException(404, "User report not found")
+
+    # "Do Not Save in Database": same as extension reports - delete the row
+    # so it leaves the Blacklist table and the URL can be reported again.
+    db.delete(report)
+    db.commit()
+    return {
+        "message": "User report removed",
+        "id": report_id,
+        "status": "removed",
+    }
+
+# ---------------------------------------------------------------------------
+# Websites users blocked from the extension ("Block URL"), all accounts.
+# Read-only for the admin: only the user who made a block can unblock it
+# (on their own Blocked Websites page).
+# ---------------------------------------------------------------------------
+
+@router.get("/user-blocked-urls")
+def all_user_blocked_urls(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    rows = (
+        db.query(UserBlockedURL)
+        .options(joinedload(UserBlockedURL.user))
+        .order_by(desc(UserBlockedURL.created_at))
+        .all()
+    )
+    return [
+        {
+            "id": r.id, "url": r.url, "hostname": r.hostname,
+            "attack_type": r.attack_type, "risk_level": r.risk_level,
+            "created_at": r.created_at,
+            "user_name": r.user.full_name if r.user else None,
+            "user_email": r.user.email if r.user else None,
+        }
+        for r in rows
+    ]
 
 # ---------------------------------------------------------------------------
 # Blacklist Report Export

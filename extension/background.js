@@ -98,7 +98,18 @@ async function removeLocalBlock(url) {
     }
 }
 
-async function addLocalBlock(url) {
+// The local entry's details (when this browser blocked it); null if none.
+async function getLocalBlock(url) {
+    const host = hostnameOf(url);
+    if (!host) return null;
+    const store = await chrome.storage.local.get("userBlockedUrls");
+    const list = store.userBlockedUrls || [];
+    return list.find((entry) => (entry.hostname || hostnameOf(entry.url)) === host) || null;
+}
+
+// details: { risk_level, attack_type, reason } from the scan that showed
+// the warning page, so the block page can explain the block later.
+async function addLocalBlock(url, details = {}) {
     const hostname = hostnameOf(url);
     const store = await chrome.storage.local.get("userBlockedUrls");
     const list = store.userBlockedUrls || [];
@@ -106,7 +117,14 @@ async function addLocalBlock(url) {
         (entry) => (entry.hostname || hostnameOf(entry.url)) === hostname,
     );
     if (!alreadyBlocked) {
-        list.unshift({ url, hostname, time: Date.now() });
+        list.unshift({
+            url,
+            hostname,
+            time: Date.now(),
+            risk_level: details.risk_level || null,
+            attack_type: details.attack_type || null,
+            reason: details.reason || null,
+        });
         if (list.length > 500) list.length = 500;
         await chrome.storage.local.set({ userBlockedUrls: list });
     }
@@ -255,17 +273,24 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     const signedIn = !!auth.Authorization;
 
     const blockLocally = async () => {
+        const entry = await getLocalBlock(url);
         await recordHistory({
             url,
             prediction: "phishing",
-            risk_level: "High",
+            risk_level: entry?.risk_level || "High",
             confidence: null,
             attack_type: "Blocked by user",
         });
         await showWarningPage(details.tabId, "blocked", {
             url,
-            domain: url,
-            reason: "You previously chose to block this website.",
+            domain: hostnameOf(url),
+            blockedBy: "user",
+            platform: "PhishGuard Chrome Extension",
+            riskLevel: entry?.risk_level || "High",
+            attackType: entry?.attack_type || null,
+            reason: entry?.reason || null,
+            blockedAt: entry?.time || null,
+            signedIn,
         });
     };
 
@@ -294,9 +319,17 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
             await showWarningPage(details.tabId, "blocked", {
                 url,
                 domain: blacklist.domain,
-                reason:
-                    blacklist.reason ||
-                    "This website was previously reported and confirmed as phishing.",
+                blockedBy: blacklist.blocked_by || (blacklist.by_user ? "user" : "admin"),
+                platform: blacklist.platform || null,
+                reportedVia: blacklist.reported_via || null,
+                riskLevel: blacklist.risk_level || "High",
+                attackType: blacklist.attack_type || null,
+                reason: blacklist.reason || null,
+                // Server times are naive UTC.
+                blockedAt: blacklist.blocked_at
+                    ? Date.parse(String(blacklist.blocked_at).replace(/Z?$/, "Z"))
+                    : null,
+                signedIn,
             });
             return;
         }
@@ -471,7 +504,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         if (message.action === "BLOCK_URL") {
-            await addLocalBlock(message.url);
+            const blockDetails = {
+                risk_level: message.riskLevel || null,
+                attack_type: message.attackType || null,
+                reason: message.reason || null,
+            };
+            await addLocalBlock(message.url, blockDetails);
 
             // Signed in: also save it to the account so the user can see
             // (and unblock) it on the website's Browser Extension page.
@@ -481,7 +519,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     await fetch(USER_BLOCKS_URL, {
                         method: "POST",
                         headers: { "Content-Type": "application/json", ...auth },
-                        body: JSON.stringify({ url: message.url, attack_type: message.attackType || null }),
+                        body: JSON.stringify({ url: message.url, ...blockDetails }),
                     });
                 } catch (error) {
                     console.error("PhishGuard save-block failed:", error);
@@ -496,7 +534,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     body: JSON.stringify({
                         url: message.url,
                         attack_type: message.attackType || "Unknown",
-                        detection_reason: "Blocked by user from the warning page",
+                        detection_reason: message.reason || "Blocked by user from the warning page",
                         browser_info: (navigator && navigator.userAgent) || "PhishGuard Extension",
                     }),
                 });

@@ -1,11 +1,19 @@
 import { useEffect, useState } from 'react'
 import { utcDate } from '../../dates.js'
-import { myBlockedURLs, unblockURL } from '../../api.js'
+import { myBlockedURLs, unblockURL, adminUserBlockedURLs } from '../../api.js'
+import { useAuth } from '../../AuthContext.jsx'
 import DateRangeFilter from '../DateRangeFilter.jsx'
 
-// Websites the user blocked with "Block URL" on the Chrome extension's
-// warning page while the extension was signed in to this account.
+// Websites the user blocked with "Block This Website" on the Chrome
+// extension's warning page while the extension was signed in to this
+// account. This page is the only place a block can be lifted - the
+// extension's block page has no Continue/Unblock button.
+// Admins see the same page for their own blocks, plus a read-only view of
+// every user's blocks (only the owner can unblock).
 export default function BlockedWebsites() {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
+  const [view, setView] = useState('mine')
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -13,12 +21,16 @@ export default function BlockedWebsites() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
 
+  const allUsers = isAdmin && view === 'all'
+
   useEffect(() => {
-    myBlockedURLs()
+    setLoading(true)
+    setError('')
+    ;(allUsers ? adminUserBlockedURLs() : myBlockedURLs())
       .then(setRows)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [])
+  }, [allUsers])
 
   // Deletes the block from the account; the row disappears from this table
   // and the signed-in extension stops blocking the domain on the next visit
@@ -40,22 +52,41 @@ export default function BlockedWebsites() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   }
   const shown = rows.filter((r) => {
-    if (q && !r.url.toLowerCase().includes(q.toLowerCase())) return false
+    const needle = q.toLowerCase()
+    if (q && !(r.url.toLowerCase().includes(needle)
+      || (allUsers && `${r.user_name || ''} ${r.user_email || ''}`.toLowerCase().includes(needle)))) return false
     const day = localDay(r.created_at)
     if (dateFrom && day < dateFrom) return false
     if (dateTo && day > dateTo) return false
     return true
   })
 
+  const riskBadge = (risk) => {
+    const r = (risk || 'High').toLowerCase()
+    return <span className={`badge ${r === 'high' ? 'phish' : 'review'}`}>{risk || 'High'}</span>
+  }
+
   return (
     <>
       <div className="page-header">
         <h2>Blocked Websites</h2>
         <p className="tagline">
-          Websites you blocked with "Block URL" on the extension's warning page.
-          The extension blocks the whole domain on every visit until you unblock it here.
+          {allUsers
+            ? 'Websites every user blocked from the extension. Read-only: only the user who blocked a website can unblock it.'
+            : 'Websites you blocked from the extension\'s phishing warning page. The extension blocks the whole domain on every visit, and this page is the only place to unblock it.'}
         </p>
       </div>
+
+      {isAdmin && (
+        <div className="seg-tabs">
+          <button className={view === 'mine' ? 'active' : ''} onClick={() => setView('mine')}>
+            My Blocked Websites
+          </button>
+          <button className={view === 'all' ? 'active' : ''} onClick={() => setView('all')}>
+            All Users' Blocked Websites
+          </button>
+        </div>
+      )}
 
       {error && <div className="error-box">{error}</div>}
 
@@ -63,7 +94,7 @@ export default function BlockedWebsites() {
         <div className="filters" style={{ flexWrap: 'wrap', marginBottom: 14 }}>
           <input
             className="scan-input"
-            placeholder="Search blocked URLs…"
+            placeholder={allUsers ? 'Search URL or user…' : 'Search blocked URLs…'}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -80,21 +111,39 @@ export default function BlockedWebsites() {
         ) : shown.length === 0 ? (
           <p className="empty">
             {rows.length === 0
-              ? 'No blocked websites yet. Blocks are saved here when the extension is signed in to your account (Extension Settings → Website Account).'
+              ? (allUsers
+                ? 'No user has blocked a website yet.'
+                : 'No blocked websites yet. Blocks are saved here when the extension is signed in to your account (Extension Settings → Website Account).')
               : 'No blocked websites match your search or date range.'}
           </p>
         ) : (
           <table className="hist">
             <thead>
-              <tr><th>Date Blocked</th><th>Domain</th><th>URL</th><th></th></tr>
+              <tr>
+                <th>Date Blocked</th>
+                {allUsers && <th>Blocked By</th>}
+                <th>Domain</th>
+                <th>URL</th>
+                <th>Risk</th>
+                {!allUsers && <th></th>}
+              </tr>
             </thead>
             <tbody>
               {shown.map((b) => (
                 <tr key={b.id}>
                   <td>{utcDate(b.created_at).toLocaleString('en-GB')}</td>
+                  {allUsers && (
+                    <td>
+                      {b.user_name || '—'}
+                      <div className="muted small">{b.user_email}</div>
+                    </td>
+                  )}
                   <td className="mono">{b.hostname}</td>
                   <td className="mono ellip">{b.url}</td>
-                  <td><button className="link-btn" onClick={() => unblock(b)}>Unblock</button></td>
+                  <td>{riskBadge(b.risk_level)}</td>
+                  {!allUsers && (
+                    <td><button className="link-btn" onClick={() => unblock(b)}>Unblock</button></td>
+                  )}
                 </tr>
               ))}
             </tbody>

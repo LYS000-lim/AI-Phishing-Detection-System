@@ -876,7 +876,8 @@ def my_blocked_urls(
     return [
         {
             "id": r.id, "url": r.url, "hostname": r.hostname,
-            "attack_type": r.attack_type, "created_at": r.created_at,
+            "attack_type": r.attack_type, "risk_level": r.risk_level,
+            "created_at": r.created_at,
         }
         for r in rows
     ]

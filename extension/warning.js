@@ -38,7 +38,7 @@ async function init() {
 
 function render(card, data, tabId) {
     if (data.mode === "blocked") {
-        renderBlocked(card, data, tabId);
+        renderBlocked(card, data);
     } else if (data.mode === "unreachable") {
         renderUnreachable(card, data, tabId);
     } else {
@@ -83,70 +83,146 @@ function renderUnreachable(card, data, tabId) {
     });
 }
 
-function renderBlocked(card, data, tabId) {
+// Blocked = already on the user's own block list or the admin blacklist.
+// Deliberately no buttons (no Continue Access / Go Back / Report): a block
+// can only be lifted from the PhishGuard website account, so the page just
+// explains who blocked the site, why, and how to unblock it.
+function renderBlocked(card, data) {
+    const risk = data.riskLevel || "High";
+    const byUser = data.blockedBy === "user";
+    const category = data.attackType && data.attackType !== "Unknown" ? data.attackType : null;
+    const host = data.domain || data.url;
+
+    const platform = byUser
+        ? `You blocked this website using the <b>PhishGuard AI Chrome Extension</b>
+           ("Block This Website" on the phishing warning page).`
+        : `The <b>PhishGuard AI Administrator</b> added this website to the
+           PhishGuard Admin Blacklist${data.reportedVia
+               ? ` after reviewing a report submitted via the <b>${pgEscape(data.reportedVia)}</b>`
+               : ""}.`;
+
+    const reasons = (data.reason || "")
+        .split("\n")
+        .map((r) => r.trim())
+        .filter(Boolean)
+        // Generic report labels say where the report came from, not why.
+        .filter((r) => !/^(Reported from|Blocked by user from) /i.test(r));
+    if (!reasons.length) {
+        reasons.push(byUser
+            ? "PhishGuard AI detected this website as phishing and you chose to block it."
+            : "An administrator reviewed a phishing report for this website and confirmed it.");
+    }
+
+    const unblock = byUser
+        ? `
+            <ol class="pg-steps">
+                <li>Open the PhishGuard AI website
+                    (<a href="${PG_WEBSITE_URL}/blocked-websites" target="_blank" rel="noopener">${PG_WEBSITE_URL}</a>)
+                    and log in to your account.</li>
+                <li>Go to <b>Blocked Websites</b>.</li>
+                <li>Click <b>Unblock</b> next to <span class="pg-mono">${pgEscape(host)}</span>.</li>
+            </ol>
+            <p class="pg-small">The extension will scan this website normally on your next visit.
+            ${data.signedIn ? "" : `This browser's extension is not signed in: sign in under
+            <b>Extension Settings &rarr; Website Account</b> so the block is saved to your
+            account and can be unblocked there.`}</p>`
+        : `
+            <p>This block was confirmed by an administrator and applies to every
+            PhishGuard AI user, so it cannot be unblocked from your account.</p>
+            <p class="pg-small">If you believe this website is safe, contact your
+            PhishGuard AI administrator and ask for it to be reviewed.</p>`;
+
     card.innerHTML = `
         <h1>&#9940; PhishGuard AI</h1>
-        <h2>Website Blocked</h2>
+        <h2>Access to This Website Is Blocked</h2>
 
         <div class="pg-blocked-banner">
-            This website was previously blocked due to phishing risk.
+            This website was blocked due to
+            <span class="pg-badge ${pgRiskBadgeClass(risk)}">${pgEscape(risk)}</span>
+            phishing risk. The page was stopped before it loaded, so nothing on it
+            could run or collect your information.
         </div>
 
         <div class="pg-info">
-            <p><b>Website:</b><br>${pgEscape(data.url)}</p>
-            <p><b>Reason:</b><br>${pgEscape(data.reason || "Confirmed phishing domain.")}</p>
+            <p><b>Website</b><br><span class="pg-mono">${pgEscape(data.url)}</span></p>
+            <p><b>Domain blocked</b><br><span class="pg-mono">${pgEscape(host)}</span>
+                <br><span class="pg-small">Every page on this domain is blocked, not just this address.</span></p>
+            <p><b>Risk level</b><br>
+                <span class="pg-badge ${pgRiskBadgeClass(risk)}">${pgEscape(risk)}</span>
+                <span class="pg-small">${pgEscape(pgRiskMeaning(risk))}</span></p>
+            ${category ? `<p><b>Attack type</b><br>${pgEscape(category)}
+                <br><span class="pg-small">${pgEscape(pgAttackDescription(category))}</span></p>` : ""}
+            <p><b>Blocked by</b><br>${platform}</p>
+            ${data.blockedAt ? `<p><b>Blocked on</b><br>${pgEscape(pgFormatTime(data.blockedAt))}</p>` : ""}
+            <p><b>Why it was blocked</b></p>
+            <ul class="pg-reasons">
+                ${reasons.map((r) => `<li>${pgEscape(r)}</li>`).join("")}
+            </ul>
         </div>
 
-        <div class="pg-recommendation">Do not continue to this website.</div>
+        <div class="pg-recommendation">
+            <b>What you should do:</b> ${pgEscape(pgRecommendation(category))}
+            If you already entered a password on this site, change it now and turn on
+            two-factor authentication.
+        </div>
 
-        <button id="pg-continue">Continue Access</button>
-        <button id="pg-leave">Go Back</button>
-        <button id="pg-report">Report URL</button>
+        <div class="pg-unblock-box">
+            <b>${byUser ? "How to unblock this website" : "Can this be unblocked?"}</b>
+            ${unblock}
+        </div>
+
+        <p class="pg-small pg-footer-note">You can safely close this tab.</p>
     `;
-
-    wireButtons(data.url, null, tabId);
 }
 
 function renderWarning(card, data, tabId) {
     const result = data.result || {};
     const attack = result.attack_type || {};
     const reasons = attack.indicators || [];
+    const risk = result.risk_level || "High";
 
     card.innerHTML = `
         <h1>&#9888;&#65039; PhishGuard AI</h1>
-        <h2>Dangerous Website Detected</h2>
-        <p>This website may be a phishing attempt.</p>
+        <h2>Phishing Website Detected</h2>
+        <p>PhishGuard AI stopped this page before it loaded because its address
+        shows strong signs of phishing. Phishing sites imitate trusted websites
+        to steal passwords, bank details or personal information.</p>
 
         <div class="pg-info">
-            <p><b>Website:</b><br>${pgEscape(result.url || data.url)}</p>
-            <p><b>Risk Level:</b><br>
-                <span class="pg-badge ${pgRiskBadgeClass(result.risk_level)}">
-                    ${pgEscape(result.risk_level || "Unknown")}
-                </span>
+            <p><b>Website</b><br><span class="pg-mono">${pgEscape(result.url || data.url)}</span></p>
+            <p><b>Risk level</b><br>
+                <span class="pg-badge ${pgRiskBadgeClass(risk)}">${pgEscape(risk)}</span>
+                <span class="pg-small">${pgEscape(pgRiskMeaning(risk))}</span>
             </p>
-            <p><b>Confidence:</b><br>${pgPct(result.confidence)}</p>
-            <p><b>Phishing Probability:</b><br>${pgPct(result.phishing_probability)}</p>
-            <p><b>Attack Type:</b><br>${pgEscape(attack.category || "Unknown")}</p>
+            <p><b>Model confidence</b><br>${pgPct(result.confidence)}</p>
+            <p><b>Phishing probability</b><br>${pgPct(result.phishing_probability)}</p>
+            <p><b>Attack type</b><br>${pgEscape(attack.category || "Unknown")}
+                ${attack.category ? `<br><span class="pg-small">${pgEscape(pgAttackDescription(attack.category))}</span>` : ""}</p>
             ${reasons.length ? `
-                <p><b>Detection Reasons:</b></p>
+                <p><b>Why it was flagged</b></p>
                 <ul class="pg-reasons">
                     ${reasons.map((r) => `<li>${pgEscape(r)}</li>`).join("")}
                 </ul>
             ` : ""}
         </div>
 
-        <div class="pg-recommendation">${pgEscape(pgRecommendation(attack.category))}</div>
+        <div class="pg-recommendation"><b>What you should do:</b> ${pgEscape(pgRecommendation(attack.category))}</div>
 
-        <button id="pg-continue">Continue Access</button>
-        <button id="pg-leave">Go Back</button>
-        <button id="pg-report">Report URL</button>
-        <button id="pg-block">Block URL</button>
+        <button id="pg-leave">&#8592; Go Back to Safety (Recommended)</button>
+        <button id="pg-block">Block This Website</button>
+        <button id="pg-report">Report as Phishing</button>
+        <button id="pg-continue">Continue Anyway (Not Recommended)</button>
+        <p class="pg-small">A blocked website can only be unblocked by logging in to
+        your PhishGuard AI account (Blocked Websites page).</p>
     `;
 
-    wireButtons(result.url || data.url, attack.category || null, tabId);
+    wireButtons(result.url || data.url, attack.category || null, tabId, {
+        riskLevel: risk,
+        reason: reasons.join("\n"),
+    });
 }
 
-function wireButtons(url, attackCategory, tabId) {
+function wireButtons(url, attackCategory, tabId, details = {}) {
     const continueBtn = document.getElementById("pg-continue");
     if (continueBtn) {
         continueBtn.addEventListener("click", async () => {
@@ -179,7 +255,9 @@ function wireButtons(url, attackCategory, tabId) {
                     body: JSON.stringify({
                         url,
                         attack_type: attackCategory || "Unknown",
-                        detection_reason: "Reported from PhishGuard warning page",
+                        // The model's reasons, so an approved report explains
+                        // the block on the admin blacklist block page.
+                        detection_reason: details.reason || "Reported from PhishGuard warning page",
                         browser_info: navigator.userAgent,
                     }),
                 });
@@ -201,8 +279,13 @@ function wireButtons(url, attackCategory, tabId) {
                 url,
                 tabId,
                 attackType: attackCategory,
+                riskLevel: details.riskLevel,
+                reason: details.reason,
             });
             blockBtn.textContent = "Blocked ✓";
+            // Reload the address: the extension now intercepts it and shows
+            // the block page (who blocked it, why, how to unblock).
+            window.location.href = url;
         });
     }
 }

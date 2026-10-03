@@ -97,11 +97,25 @@ class ReportedURL(Base):
         nullable=True,
     )
 
+    # Admin review, same as ExtensionReport: pending until the admin picks
+    # "Save in Database" (approved -> added to BlockedURL) or "Do Not Save"
+    # (row deleted).
+    status = Column(
+        String(16),
+        nullable=False,
+        default="pending",
+    )
+
     created_at = Column(
         DateTime,
         nullable=False,
         default=_utc_now,
         index=True,
+    )
+
+    reviewed_at = Column(
+        DateTime,
+        nullable=True,
     )
 
     user = relationship(
@@ -222,6 +236,19 @@ class BlockedURL(Base):
         nullable=True,
     )
 
+    # Where the approved report came from ("Chrome Extension" or
+    # "PhishGuard Website") and its attack category, so the extension's
+    # block page can say who blocked the site and why.
+    source = Column(
+        String(32),
+        nullable=True,
+    )
+
+    attack_type = Column(
+        String(64),
+        nullable=True,
+    )
+
     created_at = Column(
         DateTime,
         nullable=False,
@@ -243,4 +270,10 @@ class UserBlockedURL(Base):
     url = Column(Text, nullable=False)
     hostname = Column(String(255), nullable=False, index=True)
     attack_type = Column(String(64), nullable=True)
+    # Scan result at the moment the user clicked "Block URL" (shown on the
+    # extension's block page).
+    risk_level = Column(String(8), nullable=True)
+    reason = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, default=_utc_now, index=True)
+
+    user = relationship("User")

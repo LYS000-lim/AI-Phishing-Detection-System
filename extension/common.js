@@ -53,3 +53,30 @@ async function pgAuthHeaders() {
     const auth = await chrome.storage.session.get("pgAuthToken");
     return auth.pgAuthToken ? { Authorization: `Bearer ${auth.pgAuthToken}` } : {};
 }
+
+// PhishGuard website (frontend dev server), where blocks are unblocked.
+const PG_WEBSITE_URL = "http://localhost:5173";
+
+function pgRiskMeaning(risk) {
+    const r = (risk || "").toLowerCase();
+    if (r === "high") return "Strong evidence of phishing. Do not visit or enter any information.";
+    if (r === "medium") return "Several phishing signs were found. Treat this website as unsafe.";
+    return "Few warning signs, but the website was still blocked.";
+}
+
+// Plain-language description of each attack category (phishing_type.py).
+function pgAttackDescription(category) {
+    const map = {
+        "Credential Theft":
+            "A fake sign-in page built to capture your username and password.",
+        "Financial Scam":
+            "Imitates a bank, payment or billing page to steal card or banking details.",
+        "Fake Giveaway / Scam":
+            "Promises prizes, rewards or free items to trick you into sharing data or paying a fee.",
+        "Tech Support / Malware Scam":
+            "Shows fake security alerts or downloads to install malware or get you to call scammers.",
+        "Domain Spoofing / Brand Impersonation":
+            "Uses a well-known brand name on a domain the brand does not own, to look trustworthy.",
+    };
+    return map[category] || "A website designed to trick visitors into giving away information.";
+}

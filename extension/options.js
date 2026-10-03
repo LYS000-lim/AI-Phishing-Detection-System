@@ -126,7 +126,13 @@ async function syncLocalBlocks(token) {
         await fetch(USER_BLOCKS_SYNC_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify(list.map((e) => ({ url: e.url, time: e.time }))),
+            body: JSON.stringify(list.map((e) => ({
+                url: e.url,
+                time: e.time,
+                attack_type: e.attack_type || null,
+                risk_level: e.risk_level || null,
+                reason: e.reason || null,
+            }))),
         });
     } catch (error) {
         console.error("PhishGuard block sync failed:", error);
