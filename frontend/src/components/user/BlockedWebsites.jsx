@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { utcDate } from '../../dates.js'
-import { myBlockedURLs, unblockURL, adminUserBlockedURLs } from '../../api.js'
+import { myBlockedURLs, unblockURL, adminUserBlockedURLs, adminUnblockURL } from '../../api.js'
 import { useAuth } from '../../AuthContext.jsx'
 import DateRangeFilter from '../DateRangeFilter.jsx'
 
@@ -8,8 +8,8 @@ import DateRangeFilter from '../DateRangeFilter.jsx'
 // extension's warning page while the extension was signed in to this
 // account. This page is the only place a block can be lifted - the
 // extension's block page has no Continue/Unblock button.
-// Admins see the same page for their own blocks, plus a read-only view of
-// every user's blocks (only the owner can unblock).
+// Admins see the same page for their own blocks, plus every user's blocks,
+// and can unblock any of them.
 export default function BlockedWebsites() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
@@ -36,9 +36,10 @@ export default function BlockedWebsites() {
   // and the signed-in extension stops blocking the domain on the next visit
   // (it checks the account block list server-side on every navigation).
   const unblock = async (row) => {
-    if (!confirm(`Unblock ${row.hostname}? The extension will scan it normally again.`)) return
+    const who = allUsers ? ` for ${row.user_name || row.user_email || 'this user'}` : ''
+    if (!confirm(`Unblock ${row.hostname}${who}? The extension will scan it normally again.`)) return
     try {
-      await unblockURL(row.id)
+      await (allUsers ? adminUnblockURL : unblockURL)(row.id)
       setRows((prev) => prev.filter((b) => b.id !== row.id))
     } catch (e) {
       setError(e.message)
@@ -72,7 +73,7 @@ export default function BlockedWebsites() {
         <h2>Blocked Websites</h2>
         <p className="tagline">
           {allUsers
-            ? 'Websites every user blocked from the extension. Read-only: only the user who blocked a website can unblock it.'
+            ? "Websites every user blocked from the extension. As admin you can unblock any of them; the user's extension scans the site normally again on the next visit."
             : 'Websites you blocked from the extension\'s phishing warning page. The extension blocks the whole domain on every visit, and this page is the only place to unblock it.'}
         </p>
       </div>
@@ -125,7 +126,7 @@ export default function BlockedWebsites() {
                 <th>Domain</th>
                 <th>URL</th>
                 <th>Risk</th>
-                {!allUsers && <th></th>}
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -141,9 +142,7 @@ export default function BlockedWebsites() {
                   <td className="mono">{b.hostname}</td>
                   <td className="mono ellip">{b.url}</td>
                   <td>{riskBadge(b.risk_level)}</td>
-                  {!allUsers && (
-                    <td><button className="link-btn" onClick={() => unblock(b)}>Unblock</button></td>
-                  )}
+                  <td><button className="link-btn" onClick={() => unblock(b)}>Unblock</button></td>
                 </tr>
               ))}
             </tbody>

@@ -67,8 +67,9 @@ export const reportURL = (payload) =>
   })
 export const myBlockedURLs = () => request('/api/my-blocked-urls')
 export const unblockURL = (id) => request(`/api/my-blocked-urls/${id}`, { method: 'DELETE' })
-// Admin: every user's extension blocks (read-only)
+// Admin: every user's extension blocks (admin can unblock any of them)
 export const adminUserBlockedURLs = () => request('/api/admin/user-blocked-urls')
+export const adminUnblockURL = (id) => request(`/api/admin/user-blocked-urls/${id}`, { method: 'DELETE' })
 
 // ------ Personal history + dashboard ------
 export const myDetections = (

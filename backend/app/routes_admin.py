@@ -895,8 +895,7 @@ def reject_user_report(
 
 # ---------------------------------------------------------------------------
 # Websites users blocked from the extension ("Block URL"), all accounts.
-# Read-only for the admin: only the user who made a block can unblock it
-# (on their own Blocked Websites page).
+# The admin can review and unblock any user's block.
 # ---------------------------------------------------------------------------
 
 @router.get("/user-blocked-urls")
@@ -920,6 +919,19 @@ def all_user_blocked_urls(
         }
         for r in rows
     ]
+
+
+@router.delete("/user-blocked-urls/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
+def admin_unblock_user_url(
+    block_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    row = db.query(UserBlockedURL).filter(UserBlockedURL.id == block_id).first()
+    if not row:
+        raise HTTPException(404, "Blocked URL not found")
+    db.delete(row)
+    db.commit()
 
 # ---------------------------------------------------------------------------
 # Blacklist Report Export
