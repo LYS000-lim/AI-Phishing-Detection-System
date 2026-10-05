@@ -328,7 +328,7 @@ Actual P     1,147   18,905        Actual P       714   19,338
 
 Derived from these rates at the 0.89 threshold (approximate): TP ≈ 18,185, FN ≈ 1,867, FP ≈ 39, TN ≈ 27,166. That gives **precision ≈ 0.998, recall ≈ 0.907, F1 ≈ 0.950, accuracy ≈ 0.960**.
 
-### 6.3 Real-world evaluation of the full pipeline (`realworld_eval.py`, re-run 2026-10-04)
+### 6.3 Real-world evaluation of the full pipeline (`realworld_eval.py`, re-run 2026-10-05)
 The set has 227 live legitimate login, account and payment pages (fetched 2026-09-23) and 1,178 phishing URLs in 1,097 campaigns: 300 from OpenPhish plus 878 from phishunt 2026.
 
 | Stage | Legit shown PHISHING | Legit shown Suspicious | Phish shown PHISHING | Phish any warning | Phish PHISHING per campaign |
@@ -337,10 +337,13 @@ The set has 227 live legitimate login, account and payment pages (fetched 2026-0
 | + allowlist | 4.4% | 5.7% | 74.2% | 84.3% | 74.4% |
 | + reputation, top 50k | 0.9% | 9.3% | 74.1% | 84.3% | 74.4% |
 | + reputation, top 100k | 0.4% | 9.7% | 74.0% | 84.3% | 74.3% |
-| **+ reputation, top 250k (deployed)** | **0.0%** | **10.1%** | **73.5%** | **84.3%** | **73.8%** |
+| + reputation, top 250k | 0.0% | 10.1% | 73.5% | 84.3% | 73.8% |
 | + reputation, top 1M | 0.0% | 10.1% | 72.8% | 84.3% | 73.4% |
+| **Live app (top 250k + HTTP rule + brand rule; deployed)** | **0.0%** | **10.1%** | **76.7%** | **89.1%** | **77.2%** |
 
-**Deployed system by category.** Legitimate pages: 204 shown legitimate, 23 suspicious, 0 phishing. OpenPhish: 201 phishing, 55 suspicious, 44 legitimate. phishunt 2026: 665 phishing, 72 suspicious, 141 legitimate.
+**Live app by source.** Legitimate pages: 204 shown legitimate, 23 suspicious, 0 phishing; the brand rule changed none of them. OpenPhish: 202 phishing, 54 suspicious, 44 legitimate (67.3% Phishing, 85.3% any warning). phishunt 2026: 701 phishing, 93 suspicious, 84 legitimate (79.8% Phishing, 90.4% any warning).
+
+*Correction (2026-10-05):* before this date `realworld_eval.py` called `classify_vec()` without the URL, so it skipped the HTTP and brand rules and under-reported the live app (73.5% Phishing / 84.3% any warning). The breakdown of the 128 phishing URLs the live app still shows as legitimate is in `docs/fn_analysis.md`.
 
 Only 1.38% of a 20k PhiUSIIL phishing sample sits on a top-250k domain, so the reputation cap rarely hides real phishing.
 
@@ -516,7 +519,7 @@ The project has **no pytest unit tests**: `pytest` is listed, but there are no `
 |---|---|---|---|
 | `fp_category_tests.py` | Categorised functional test | 39 hand-picked URLs in 13 categories. Compares the raw model at 0.5 with the live pipeline. | `outputs/manual_test_results.csv` |
 | `batch_eval.py` | Large-scale FP test | 55,758 held-out legitimate URLs (Tranco, top-1M, deep links) | `outputs/batch_eval_results.csv` |
-| `build_realworld_set.py` + `realworld_eval.py` | Real-world / time-based test | Live legitimate login pages vs. current OpenPhish and phishunt phishing. Measures each layer (model, allowlist, reputation) and sweeps the rank cut-off. | console report, `outputs/realworld_eval_results.csv` |
+| `build_realworld_set.py` + `realworld_eval.py` | Real-world / time-based test | Live legitimate login pages vs. current OpenPhish and phishunt phishing. Measures each layer (model, allowlist, reputation, then the full live app with the HTTP and brand rules) and sweeps the rank cut-off. | console report, `outputs/realworld_eval_results.csv` |
 | `explanation_eval.py` + `explanation_scoring.py` | XAI quality test | Runs `/api/explain` logic per URL and scores four deterministic checklists | `outputs/explanation_eval_report.md`, `outputs/explanation_eval_summary.csv` |
 | Notebook sanity check | Smoke test | Six known URLs (chatgpt.com, google search, github, wikipedia, `paypa1-secure-login.win/...`, `192.168.0.1/login.php`) | notebook output |
 
@@ -541,7 +544,7 @@ The project has **no pytest unit tests**: `pytest` is listed, but there are no `
 
 ### Model and detection
 1. **URL-only model.** It never inspects page content, so phishing hosted on a **compromised reputable domain** cannot be separated from the real site. Example: `http://math.mak.ac.ug/aux`, HTTPS score 0.28.
-2. **Lower recall on recent phishing.** On 2026 feed phishing, 77.97% gets a hard Phishing verdict and 84.2% gets any warning; the real-world set shows 73.5% and 84.3%. About 16% of current phishing is shown as legitimate. Examples: random-looking domains with clean paths such as `wbeuvvfx.com`, and `~user/admin` paths on unranked hosts.
+2. **Lower recall on recent phishing.** On 2026 feed phishing, the model alone gives 77.97% a hard Phishing verdict and 84.2% any warning (time-based test split). On the real-world set the live app reaches 76.7% Phishing and 89.1% any warning, so 128 of 1,178 (10.9%) current phishing URLs are still shown as legitimate. 99.5% of those contain no suspicious keywords and 88% use HTTPS (`docs/fn_analysis.md`).
 3. **Real login pages are often Suspicious.** 10.1% of live legitimate login and banking pages (Microsoft, Proton, Zoho, Booking.com, Malaysian banks) show Suspicious, because their URLs resemble credential-phishing URLs. The reputation cap prevents a hard Phishing accusation but not the warning.
 4. **Dataset artefacts.** PhiUSIIL's legitimate class is almost entirely `https://www.` homepages. This is mitigated by canonicalisation, augmentation, deep links and the HTTP rule, but the raw model still over-weights `IsHTTPS`: 29% raw FP at 0.5 on real deep links.
 5. **Label noise.** 162 PhiUSIIL "phishing" rows are real service homepages (ipify.org, coinbase.com, w3.org).

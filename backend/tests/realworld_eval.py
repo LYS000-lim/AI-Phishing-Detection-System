@@ -3,11 +3,15 @@ Real-world evaluation of the FULL deployed pipeline on realworld_eval_set.csv
 (build it with build_realworld_set.py): live legitimate login/account/
 payment pages vs. current OpenPhish phishing URLs.
 
-Compares three stages, so the report can show what each layer contributes:
+Compares the stages, so the report can show what each layer contributes:
   model        - ML model + tuned thresholds only
   +allowlist   - curated trusted-domain allowlist first (skips the model)
-  +reputation  - deployed system: allowlist, model, then the domain
-                 reputation cap (reputable domain -> at most "suspicious")
+  +reputation  - allowlist, model, then the domain reputation cap
+                 (reputable domain -> at most "suspicious")
+  live app     - exactly what users see: the above at the deployed cut-off
+                 plus the HTTP rule and the brand-impersonation rule
+                 (ml_state.classify_vec with the URL). Per-category results
+                 and the URL lists use this stage.
 
 Also sweeps the reputation rank cut-off, and measures how much PhiUSIIL
 phishing sits on domains the reputation layer would treat as reputable.
@@ -41,12 +45,18 @@ CUTOFFS = [50_000, 100_000, 250_000, 500_000, 1_000_000]
 
 
 def verdicts(url):
-    v = classify_vec(feature_vector(url), extract_features(url))
+    vec, feats = feature_vector(url), extract_features(url)
+    # Without the URL, classify_vec returns the model + thresholds verdict
+    # only, so the reputation cut-off can be swept below. With the URL it is
+    # exactly what the live app shows (reputation cap, HTTP rule, brand rule).
+    v = classify_vec(vec, feats)
+    trusted = is_trusted(url)
     rep = domain_reputation(url, max_rank=1_000_000)
     return {
         "p_phish": round(v["p_phish"], 3),
         "model": v["prediction"],
-        "trusted": is_trusted(url),
+        "live": "legitimate" if trusted else classify_vec(vec, feats, url)["prediction"],
+        "trusted": trusted,
         "rank": rep["rank"] if rep["reputable"] else None,  # None if not rankable/platform
     }
 
@@ -100,14 +110,16 @@ def main():
     for c in CUTOFFS:
         df[f"s_{c}"] = df.apply(lambda r: system(r, c), axis=1)
         rows[f"+reputation top {c:,}"] = summarise(df, f"s_{c}")
+    df["s_live"] = df["live"]
+    rows[f"live app (top {MAX_RANK:,} + HTTP + brand rules)"] = summarise(df, "s_live")
     print(pd.DataFrame(rows).T.to_string(), "\n")
 
-    col = f"s_{MAX_RANK}"
+    col = "s_live"
     for cat in sorted(df[df.label == 1].category.unique()):
         sub = df[(df.label == 0) | (df.category == cat)]
         print(f"Deployed system, phishing source {cat}:", summarise(sub, col))
     print()
-    print(f"Deployed cut-off (top {MAX_RANK:,}) by category:")
+    print("Live app by category:")
     by = df.groupby(["label", "category"])[col].value_counts().unstack(fill_value=0)
     print(by.to_string(), "\n")
 
