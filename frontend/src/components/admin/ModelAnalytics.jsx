@@ -5,6 +5,7 @@ import {
 } from 'chart.js'
 import { Bar } from 'react-chartjs-2'
 import { adminAnalytics, adminGlobalLime, adminGlobalShap } from '../../api.js'
+import { useThemeColors } from '../../theme.js'
 
 ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend)
 
@@ -42,6 +43,7 @@ function ConfusionMatrix({ cm, title }) {
 }
 
 export default function ModelAnalytics() {
+  const c = useThemeColors()
   const [data, setData] = useState(null)
   const [shap, setShap] = useState(null)
   const [lime, setLime] = useState(null)
@@ -66,24 +68,24 @@ export default function ModelAnalytics() {
       {
         label: 'Decision Tree',
         data: [dt.accuracy, dt.precision, dt.recall, dt.f1_score],
-        backgroundColor: '#38bdf8', borderRadius: 4,
+        backgroundColor: c.accent, borderRadius: 4,
       },
       {
         label: 'Random Forest',
         data: [rf.accuracy, rf.precision, rf.recall, rf.f1_score],
-        backgroundColor: '#a78bfa', borderRadius: 4,
+        backgroundColor: c.accent2, borderRadius: 4,
       },
     ],
   }
   const cmpOpts = {
     responsive: true,
-    plugins: { legend: { labels: { color: '#e6eef9' } } },
+    plugins: { legend: { labels: { color: c.text } } },
     scales: {
-      x: { ticks: { color: '#8ca3c3' }, grid: { color: '#223350' } },
+      x: { ticks: { color: c.muted }, grid: { color: c.grid } },
       y: {
         min: 0.9, max: 1,
-        ticks: { color: '#8ca3c3', callback: (v) => (v * 100).toFixed(0) + '%' },
-        grid: { color: '#223350' },
+        ticks: { color: c.muted, callback: (v) => (v * 100).toFixed(0) + '%' },
+        grid: { color: c.grid },
       },
     },
   }

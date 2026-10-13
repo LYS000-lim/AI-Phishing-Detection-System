@@ -5,6 +5,7 @@ import {
   Legend, LinearScale, LineElement, PointElement, Tooltip,
 } from 'chart.js'
 import { Bar, Doughnut, Line } from 'react-chartjs-2'
+import { themeColors, useThemeColors } from '../theme.js'
 
 // Draws each doughnut/pie slice's raw value centered inside the slice
 // (e.g. the phishing/legitimate counts on Detection Result Overview),
@@ -91,8 +92,8 @@ const TILE_GAP_AFTER = 18
 
 const measureTileGroupHeight = () => TILE_TITLE_HEIGHT + TILE_ROW_HEIGHT + TILE_GAP_AFTER
 
-const drawTileGroup = (ctx, group, x, y, width) => {
-  ctx.fillStyle = '#e6eef9'
+const drawTileGroup = (ctx, group, x, y, width, c) => {
+  ctx.fillStyle = c.text
   ctx.font = 'bold 16px Inter, system-ui, sans-serif'
   ctx.fillText(group.title, x, y + 18)
   y += TILE_TITLE_HEIGHT
@@ -101,16 +102,16 @@ const drawTileGroup = (ctx, group, x, y, width) => {
   const cardWidth = (width - cardGap * (group.items.length - 1)) / group.items.length
   group.items.forEach((item, i) => {
     const cardX = x + i * (cardWidth + cardGap)
-    ctx.fillStyle = '#111a2e'
+    ctx.fillStyle = c.panel2
     ctx.fillRect(cardX, y, cardWidth, TILE_ROW_HEIGHT)
 
-    ctx.fillStyle = '#e6eef9'
+    ctx.fillStyle = c.text
     ctx.font = 'bold 18px Inter, system-ui, sans-serif'
     ctx.textAlign = 'center'
     const valueText = String(item.value)
     ctx.fillText(valueText, cardX + cardWidth / 2, y + 26, cardWidth - 10)
 
-    ctx.fillStyle = '#8ca3c3'
+    ctx.fillStyle = c.muted
     ctx.font = '11px Inter, system-ui, sans-serif'
     ctx.fillText(item.label, cardX + cardWidth / 2, y + 46, cardWidth - 10)
     ctx.textAlign = 'left'
@@ -125,11 +126,11 @@ const drawTileGroup = (ctx, group, x, y, width) => {
 // explanatory description per chart, so the download is meaningful on its
 // own - a bare chart image with no caption is not useful once it's out of
 // the dashboard's context (e.g. pasted into a report). Chart.js canvases
-// are transparent, so the composite canvas is filled with the app's dark
-// background first - without that, browsers/image viewers render the
-// transparent areas as white and the light theme colors (axis labels,
-// etc.) become unreadable.
+// are transparent, so the composite canvas is filled with the current
+// theme's background first - without that, image viewers render the
+// transparent areas as white and dark-theme text becomes unreadable.
 const downloadAllCharts = async (charts, summaryTiles = []) => {
+  const c = themeColors()
   const available = charts.filter(({ ref }) => ref.current)
   if (available.length === 0 && summaryTiles.length === 0) return
 
@@ -165,21 +166,21 @@ const downloadAllCharts = async (charts, summaryTiles = []) => {
   canvas.width = width
   canvas.height = height
   const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#0b1220'
+  ctx.fillStyle = c.bg
   ctx.fillRect(0, 0, width, height)
 
   let y = padding
   summaryTiles.forEach((group) => {
-    y = drawTileGroup(ctx, group, padding, y, width - padding * 2)
+    y = drawTileGroup(ctx, group, padding, y, width - padding * 2, c)
   })
 
   available.forEach(({ title }, i) => {
-    ctx.fillStyle = '#e6eef9'
+    ctx.fillStyle = c.text
     ctx.font = 'bold 16px Inter, system-ui, sans-serif'
     ctx.fillText(title, padding, y + 18)
     y += titleHeight
 
-    ctx.fillStyle = '#8ca3c3'
+    ctx.fillStyle = c.muted
     ctx.font = '13px Inter, system-ui, sans-serif'
     descLines[i].forEach((line) => {
       ctx.fillText(line, padding, y + 13)
@@ -232,6 +233,7 @@ export function DashboardFilters({ dateFrom, dateTo, source, onRangeChange, onSo
 const DashboardVisuals = forwardRef(function DashboardVisuals({
   visuals, dateFrom, dateTo, loading, summaryTiles = [],
 }, ref) {
+  const c = useThemeColors()
   const trendRef = useRef(null)
   const pieRef = useRef(null)
   const distRef = useRef(null)
@@ -246,16 +248,16 @@ const DashboardVisuals = forwardRef(function DashboardVisuals({
   const trendData = {
     labels: trend.map((d) => d.day),
     datasets: [
-      { label: 'Phishing', data: trend.map((d) => d.phishing), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.2)', tension: .3 },
-      { label: 'Legitimate', data: trend.map((d) => d.legitimate), borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,.2)', tension: .3 },
+      { label: 'Phishing', data: trend.map((d) => d.phishing), borderColor: c.bad, backgroundColor: 'rgba(239,68,68,.2)', tension: .3 },
+      { label: 'Legitimate', data: trend.map((d) => d.legitimate), borderColor: c.good, backgroundColor: 'rgba(16,185,129,.2)', tension: .3 },
     ],
   }
   const trendOpts = {
     responsive: true,
-    plugins: { legend: { labels: { color: '#e6eef9' } } },
+    plugins: { legend: { labels: { color: c.text } } },
     scales: {
-      x: { ticks: { color: '#8ca3c3' }, grid: { color: '#223350' } },
-      y: { ticks: { color: '#8ca3c3' }, grid: { color: '#223350' } },
+      x: { ticks: { color: c.muted }, grid: { color: c.grid } },
+      y: { ticks: { color: c.muted }, grid: { color: c.grid } },
     },
   }
 
@@ -265,27 +267,27 @@ const DashboardVisuals = forwardRef(function DashboardVisuals({
   const legitPct = resultTotal ? 100 - phishPct : 0
   const pieData = {
     labels: [`Phishing (${phishPct}%)`, `Legitimate (${legitPct}%)`],
-    datasets: [{ data: [result.phishing, result.legitimate], backgroundColor: ['#ef4444', '#10b981'], borderWidth: 0 }],
+    datasets: [{ data: [result.phishing, result.legitimate], backgroundColor: [c.bad, c.good], borderWidth: 0 }],
   }
 
   const dist = visuals?.feature_distribution || {}
   const distData = {
     labels: Object.keys(dist).map((k) => FEATURE_LABELS[k] || k),
-    datasets: [{ data: Object.values(dist), backgroundColor: '#38bdf8', borderRadius: 4 }],
+    datasets: [{ data: Object.values(dist), backgroundColor: c.accent, borderRadius: 4 }],
   }
   const distOpts = {
     indexAxis: 'y', responsive: true,
     plugins: { legend: { display: false } },
     scales: {
-      x: { ticks: { color: '#8ca3c3' }, grid: { color: '#223350' } },
-      y: { ticks: { color: '#e6eef9' }, grid: { display: false } },
+      x: { ticks: { color: c.muted }, grid: { color: c.grid } },
+      y: { ticks: { color: c.text }, grid: { display: false } },
     },
   }
 
   const attackFreq = visuals?.attack_category_frequency || []
   const attackFreqData = {
     labels: attackFreq.map((a) => a.category),
-    datasets: [{ label: 'Detections', data: attackFreq.map((a) => a.count), backgroundColor: '#a78bfa', borderRadius: 4 }],
+    datasets: [{ label: 'Detections', data: attackFreq.map((a) => a.count), backgroundColor: c.accent2, borderRadius: 4 }],
   }
   const attackFreqOpts = {
     responsive: true,
@@ -295,15 +297,15 @@ const DashboardVisuals = forwardRef(function DashboardVisuals({
       tooltip: { callbacks: { title: (items) => attackFreq[items[0].dataIndex]?.category } },
     },
     scales: {
-      x: { ticks: { color: '#8ca3c3', precision: 0 }, grid: { color: '#223350' } },
-      y: { ticks: { color: '#8ca3c3', callback: (val, i) => shortenLabel(attackFreqData.labels[i]) }, grid: { color: '#223350' } },
+      x: { ticks: { color: c.muted, precision: 0 }, grid: { color: c.grid } },
+      y: { ticks: { color: c.muted, callback: (val, i) => shortenLabel(attackFreqData.labels[i]) }, grid: { color: c.grid } },
     },
   }
 
   const sourceDist = visuals?.source_distribution || []
   const sourceData = {
     labels: sourceDist.map((s) => s.source),
-    datasets: [{ label: 'Share of detections', data: sourceDist.map((s) => s.percentage), backgroundColor: ['#38bdf8', '#a78bfa'], borderRadius: 4 }],
+    datasets: [{ label: 'Share of detections', data: sourceDist.map((s) => s.percentage), backgroundColor: [c.accent, c.accent2], borderRadius: 4 }],
   }
   const sourceOpts = {
     responsive: true,
@@ -313,8 +315,8 @@ const DashboardVisuals = forwardRef(function DashboardVisuals({
       tooltip: { callbacks: { label: (item) => `${item.raw}% (${sourceDist[item.dataIndex]?.count} detections)` } },
     },
     scales: {
-      x: { ticks: { color: '#8ca3c3', callback: (v) => `${v}%` }, grid: { color: '#223350' } },
-      y: { ticks: { color: '#e6eef9' }, grid: { display: false } },
+      x: { ticks: { color: c.muted, callback: (v) => `${v}%` }, grid: { color: c.grid } },
+      y: { ticks: { color: c.text }, grid: { display: false } },
     },
   }
 
@@ -365,7 +367,7 @@ const DashboardVisuals = forwardRef(function DashboardVisuals({
             Displays the proportion of phishing and legitimate URL classifications detected by the system.
           </p>
           {resultTotal > 0
-            ? <Doughnut ref={pieRef} data={pieData} options={{ plugins: { legend: { position: 'bottom', labels: { color: '#e6eef9' } } } }} />
+            ? <Doughnut ref={pieRef} data={pieData} options={{ plugins: { legend: { position: 'bottom', labels: { color: c.text } } } }} />
             : <p className="empty">No scans match this filter.</p>}
         </section>
         <section className="panel">

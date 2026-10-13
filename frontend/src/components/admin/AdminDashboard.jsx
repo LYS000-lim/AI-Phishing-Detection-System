@@ -61,9 +61,9 @@ export default function AdminDashboard() {
         <div className="tiles">
           <div className="tile"><div className="v">{totals.users}</div><div className="k">Active Users</div></div>
           <div className="tile"><div className="v">{totals.scans}</div><div className="k">Total Scans</div></div>
-          <div className="tile"><div className="v" style={{ color: '#ef4444' }}>{totals.phishing}</div><div className="k">Phishing Detection</div></div>
-          <div className="tile"><div className="v" style={{ color: '#10b981' }}>{totals.legitimate}</div><div className="k">Legitimate Detection</div></div>
-          <div className="tile"><div className="v" style={{ color: '#38bdf8' }}>{totals.extension_detections}</div><div className="k">Extension Detection</div></div>
+          <div className="tile"><div className="v" style={{ color: 'var(--bad)' }}>{totals.phishing}</div><div className="k">Phishing Detection</div></div>
+          <div className="tile"><div className="v" style={{ color: 'var(--good)' }}>{totals.legitimate}</div><div className="k">Legitimate Detection</div></div>
+          <div className="tile"><div className="v" style={{ color: 'var(--accent)' }}>{totals.extension_detections}</div><div className="k">Extension Detection</div></div>
         </div>
       </section>
 

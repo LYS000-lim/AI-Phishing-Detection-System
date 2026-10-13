@@ -9,11 +9,11 @@ import { todayISO } from '../DateRangeFilter.jsx'
 // Simple client-side label from the user's own phishing ratio — no backend
 // change needed, purely descriptive of scans run so far.
 const protectionLevel = (total, phishing) => {
-  if (total === 0) return { label: 'N/A', color: '#8ca3c3' }
+  if (total === 0) return { label: 'N/A', color: 'var(--muted)' }
   const ratio = phishing / total
-  if (ratio < 0.1) return { label: 'Good', color: '#10b981' }
-  if (ratio < 0.3) return { label: 'Fair', color: '#f59e0b' }
-  return { label: 'Needs Attention', color: '#ef4444' }
+  if (ratio < 0.1) return { label: 'Good', color: 'var(--good)' }
+  if (ratio < 0.3) return { label: 'Fair', color: 'var(--warn)' }
+  return { label: 'Needs Attention', color: 'var(--bad)' }
 }
 
 const daysAgoISO = (n) => {
@@ -86,11 +86,11 @@ export default function UserDashboard() {
             <div className="k">Total URLs Checked</div>
           </div>
           <div className="tile">
-            <div className="v" style={{ color: '#ef4444' }}>{totals.phishing}</div>
+            <div className="v" style={{ color: 'var(--bad)' }}>{totals.phishing}</div>
             <div className="k">Threats Detected</div>
           </div>
           <div className="tile">
-            <div className="v" style={{ color: '#10b981' }}>{totals.legitimate}</div>
+            <div className="v" style={{ color: 'var(--good)' }}>{totals.legitimate}</div>
             <div className="k">Safe Websites</div>
           </div>
           <div className="tile">

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { utcDate } from '../dates.js'
 import { personalSummary, updateProfile } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
+import { useTheme } from '../theme.js'
 
 const initialsOf = (name) =>
   (name || '')
@@ -20,6 +21,7 @@ export default function Profile() {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
   const [totalScans, setTotalScans] = useState(null)
+  const [theme, setTheme] = useTheme()
 
   useEffect(() => {
     personalSummary().then((d) => setTotalScans(d.totals.total)).catch(() => {})
@@ -86,6 +88,19 @@ export default function Profile() {
           <dt>Role</dt><dd style={{ textTransform: 'capitalize' }}>{user?.role}</dd>
           <dt>Account Status</dt><dd>{user?.is_active === false ? 'Inactive' : 'Active'}</dd>
         </dl>
+      </section>
+
+      <section className="panel">
+        <h3>Appearance</h3>
+        <p className="section-intro">Choose how PhishGuard looks in this browser.</p>
+        <div className="seg-tabs" role="group" aria-label="Theme">
+          <button type="button" className={theme === 'dark' ? 'active' : ''} aria-pressed={theme === 'dark'} onClick={() => setTheme('dark')}>
+            Night mode
+          </button>
+          <button type="button" className={theme === 'light' ? 'active' : ''} aria-pressed={theme === 'light'} onClick={() => setTheme('light')}>
+            Day mode
+          </button>
+        </div>
       </section>
 
       <section className="panel">

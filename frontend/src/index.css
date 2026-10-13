@@ -10,6 +10,36 @@
   --good: #10b981;
   --bad: #ef4444;
   --warn: #f59e0b;
+  /* Softer tints of good/bad/warn used for text on tinted boxes. */
+  --good-soft: #a7f3d0;
+  --bad-soft: #fecaca;
+  --warn-soft: #fde68a;
+  --on-accent: #041627;
+  --border-strong: #223350;
+  --overlay: rgba(0, 0, 0, .55);
+  color-scheme: dark;
+}
+
+/* Light theme, chosen on the Profile page (theme.js sets data-theme). */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #f3f6fb;
+  --border: #d9e0ea;
+  --text: #0f172a;
+  --muted: #4b5a72;
+  --accent: #075985;
+  --accent-2: #6d28d9;
+  --good: #047857;
+  --bad: #b91c1c;
+  --warn: #92400e;
+  --good-soft: #065f46;
+  --bad-soft: #991b1b;
+  --warn-soft: #92400e;
+  --on-accent: #ffffff;
+  --border-strong: #c6d0de;
+  --overlay: rgba(15, 23, 42, .35);
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -116,7 +146,7 @@ body {
   height: 64px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #041627;
+  color: var(--on-accent);
   font-weight: 800;
   font-size: 22px;
   display: grid;
@@ -182,7 +212,7 @@ body {
 .scan-row { display: flex; gap: 10px; }
 .scan-btn {
   background: var(--accent);
-  color: #041627;
+  color: var(--on-accent);
   border: none;
   border-radius: 8px;
   padding: 10px 18px;
@@ -195,7 +225,7 @@ body {
 .scan-btn.secondary {
   background: transparent;
   color: var(--text);
-  border: 1px solid #223350;
+  border: 1px solid var(--border-strong);
 }
 
 .link-btn {
@@ -259,7 +289,7 @@ body {
   background: rgba(16, 185, 129, .12);
   border: 1px solid rgba(16, 185, 129, .35);
   border-radius: 8px;
-  color: #a7f3d0;
+  color: var(--good-soft);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -342,7 +372,7 @@ body {
 /* ------------ Modal ------------ */
 .modal-backdrop {
   position: fixed; inset: 0;
-  background: rgba(0, 0, 0, .55);
+  background: var(--overlay);
   display: grid; place-items: center;
   padding: 24px; z-index: 40;
 }
@@ -374,7 +404,7 @@ body {
 .error-box {
   background: rgba(239, 68, 68, .1);
   border: 1px solid rgba(239, 68, 68, .35);
-  color: #fecaca;
+  color: var(--bad-soft);
   padding: 10px 12px;
   border-radius: 8px;
   margin: 10px 0;
@@ -385,7 +415,7 @@ body {
 .success-banner {
   background: rgba(16, 185, 129, .1);
   border: 1px solid rgba(16, 185, 129, .35);
-  color: #a7f3d0;
+  color: var(--good-soft);
   padding: 10px 12px;
   border-radius: 8px;
   margin: 10px 0 4px;
@@ -572,7 +602,7 @@ body {
 
 .report-btn {
   background: transparent;
-  color: #fecaca;
+  color: var(--bad-soft);
   border: 1px solid rgba(239, 68, 68, .45);
   border-radius: 8px;
   padding: 9px 14px;
@@ -739,8 +769,8 @@ body {
   margin-bottom: 8px;
 }
 
-.phishing-evidence .evidence-title { color: #fecaca; }
-.legitimate-evidence .evidence-title { color: #a7f3d0; }
+.phishing-evidence .evidence-title { color: var(--bad-soft); }
+.legitimate-evidence .evidence-title { color: var(--good-soft); }
 
 .evidence-card > p {
   color: var(--muted);
@@ -799,8 +829,8 @@ body {
   font-weight: 750;
 }
 
-.phishing-reasons .reason-label { color: #fecaca; }
-.legitimate-reasons .reason-label { color: #a7f3d0; }
+.phishing-reasons .reason-label { color: var(--bad-soft); }
+.legitimate-reasons .reason-label { color: var(--good-soft); }
 
 .reason-list li > span {
   color: var(--text);
@@ -849,7 +879,7 @@ body {
   background: rgba(245, 158, 11, .1);
   border: 1px solid rgba(245, 158, 11, .35);
   border-radius: 10px;
-  color: #fde68a;
+  color: var(--warn-soft);
 }
 
 .rec-icon { font-size: 16px; line-height: 1.4; }
@@ -922,7 +952,7 @@ body {
 
 .date-error {
   flex-basis: 100%;
-  color: #ef4444;
+  color: var(--bad);
   font-size: 12px;
 }
 

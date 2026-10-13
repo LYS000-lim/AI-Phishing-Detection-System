@@ -63,7 +63,7 @@ export default function AdminExtensionMonitoring() {
         <div className="tiles">
           <div className="tile"><div className="v">{summary?.totals.extension_users ?? '-'}</div><div className="k">Total Extension Users</div></div>
           <div className="tile"><div className="v">{summary?.totals.extension_detections ?? '-'}</div><div className="k">Extension Detection Count</div></div>
-          <div className="tile"><div className="v" style={{ color: '#ef4444' }}>{summary?.totals.threats_found ?? '-'}</div><div className="k">Threats Found</div></div>
+          <div className="tile"><div className="v" style={{ color: 'var(--bad)' }}>{summary?.totals.threats_found ?? '-'}</div><div className="k">Threats Found</div></div>
         </div>
       </section>
 

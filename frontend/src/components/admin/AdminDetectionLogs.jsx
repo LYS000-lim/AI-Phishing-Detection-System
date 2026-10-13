@@ -196,8 +196,8 @@ export default function AdminDetectionLogs() {
         {summary && (
           <div className="tiles" style={{ marginBottom: 18 }}>
             <div className="tile"><div className="v">{summary.total_detections}</div><div className="k">Total Detection</div></div>
-            <div className="tile"><div className="v" style={{ color: '#ef4444' }}>{summary.phishing_count}</div><div className="k">Phishing Count</div></div>
-            <div className="tile"><div className="v" style={{ color: '#10b981' }}>{summary.legitimate_count}</div><div className="k">Legitimate Count</div></div>
+            <div className="tile"><div className="v" style={{ color: 'var(--bad)' }}>{summary.phishing_count}</div><div className="k">Phishing Count</div></div>
+            <div className="tile"><div className="v" style={{ color: 'var(--good)' }}>{summary.legitimate_count}</div><div className="k">Legitimate Count</div></div>
             <div className="tile"><div className="v">{summary.detection_rate_pct}%</div><div className="k">Detection Rate</div></div>
             <div className="tile"><div className="v" style={{ fontSize: 16 }}>{summary.most_common_attack_type || 'N/A'}</div><div className="k">Most Common Attack Type</div></div>
             <div className="tile"><div className="v">{summary.average_confidence_pct}%</div><div className="k">Average Confidence</div></div>
