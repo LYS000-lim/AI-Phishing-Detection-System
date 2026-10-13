@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { explainURL, reportURL, scanURL } from '../../api.js'
+import ShapChart from './ShapChart.jsx'
 
 const pct = (value) => `${((value ?? 0) * 100).toFixed(1)}%`
 
@@ -101,7 +102,7 @@ const RATIO_FEATURES = new Set([
 // Renders a raw feature value in plain language for non-technical readers.
 // The mono "Feature" row alongside it still shows the raw code (e.g. URLLength)
 // for technical/academic transparency.
-const formatDetectedValue = (feature, value) => {
+export const formatDetectedValue = (feature, value) => {
   if (value == null) return '-'
 
   if (BOOLEAN_FEATURES.has(feature)) {
@@ -113,7 +114,8 @@ const formatDetectedValue = (feature, value) => {
   }
 
   if (COUNT_UNITS[feature]) {
-    return `${displayValue(value)} ${COUNT_UNITS[feature]}`
+    const unit = COUNT_UNITS[feature]
+    return `${displayValue(value)} ${Number(value) === 1 ? unit.replace(/s$/, '').replace(/s'$/, "'") : unit}`
   }
 
   return displayValue(value)
@@ -529,6 +531,12 @@ export default function Scanner({ scanFn = scanURL }) {
             </p>
           </section>
 
+          <ShapChart
+            explain={explain}
+            formatValue={formatDetectedValue}
+            overrideNote={isOverridden ? `These are model scores only. The final verdict above also depends on a rule (${overrideNote.charAt(0).toLowerCase()}${overrideNote.slice(1)}).` : null}
+          />
+
           <section className="panel result-section">
             <h3>AI Explanation Evidence</h3>
             <p className="section-intro">
@@ -617,6 +625,12 @@ export default function Scanner({ scanFn = scanURL }) {
             </ul>
           </section>
 
+          <ShapChart
+            explain={explain}
+            formatValue={formatDetectedValue}
+            overrideNote={isOverridden ? `These are model scores only. The final verdict above also depends on a rule (${overrideNote.charAt(0).toLowerCase()}${overrideNote.slice(1)}).` : null}
+          />
+
           <section className="panel result-section">
             <h3>AI Explanation Evidence</h3>
             <p className="section-intro">
@@ -699,6 +713,12 @@ export default function Scanner({ scanFn = scanURL }) {
               })}
             </ul>
           </section>
+
+          <ShapChart
+            explain={explain}
+            formatValue={formatDetectedValue}
+            overrideNote={isOverridden ? `These are model scores only. The final verdict above also depends on a rule (${overrideNote.charAt(0).toLowerCase()}${overrideNote.slice(1)}).` : null}
+          />
 
           <section className="panel result-section">
             <h3>AI Explanation Evidence</h3>

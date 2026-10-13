@@ -15,7 +15,7 @@ from .explanations import (
     plain_text_explanation, risk_level,
 )
 from .features import FEATURE_ORDER, extract_features, feature_vector
-from .ml_state import classify_vec, get_lime_explainer, get_shap_explainer, model_info, MODEL
+from .ml_state import classify_vec, get_lime_explainer, get_shap_explainer, model_info, MODEL, what_if_changes
 from .models import Detection, ReportedURL, User, UserBlockedURL
 from .schemas import (
     BatchRequest, DetectionOut, PasswordChange, ProfileUpdate,
@@ -258,6 +258,13 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         key=lambda d: abs(d["shap_value"]),
         reverse=True,
     )[:10]
+    # Starting point of the SHAP chart: the model's average phishing score.
+    base = np.ravel(shap_exp.expected_value)
+    shap_base = float(base[1] if base.size > 1 else base[0])
+
+    # What-if: the top features re-scored one at a time with a value
+    # typical of the opposite class (ml_state.what_if_changes).
+    what_if = what_if_changes(vec, contrib, prediction)
 
     # LIME local rules for the phishing class.
     lime_exp = get_lime_explainer()
@@ -448,7 +455,11 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         "shap": {
             "note": "Positive values push toward PHISHING; negative toward LEGITIMATE.",
             "top_features": shap_out,
+            "base_value": round(shap_base, 4),
+            "model_score": round(float(MODEL.predict_proba(vec)[0][1]), 4),
+            "feature_values": {d["feature"]: features.get(d["feature"]) for d in shap_out},
         },
+        "what_if": what_if,
         "lime": {
             "note": "Positive weights support PHISHING; negative support LEGITIMATE.",
             "top_rules": lime_out,

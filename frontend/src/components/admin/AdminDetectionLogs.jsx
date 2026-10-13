@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { utcDate } from '../../dates.js'
 import DateRangeFilter from '../DateRangeFilter.jsx'
 import { adminDeleteDetection, adminDetections, explainURL, exportDetections } from '../../api.js'
+import ShapChart from '../user/ShapChart.jsx'
+import { formatDetectedValue } from '../user/Scanner.jsx'
 
 const ATTACK_TYPES = [
   'Financial Scam',
@@ -341,6 +343,7 @@ export default function AdminDetectionLogs() {
               <div style={{ marginTop: 14 }}>
                 <h3>Explainable AI</h3>
                 {xai.plain_text && <p className="xai-note">{xai.plain_text}</p>}
+                <ShapChart explain={xai} formatValue={formatDetectedValue} />
                 <div className="split-2">
                   <div>
                     <div className="cm-title">SHAP - top features</div>

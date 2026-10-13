@@ -118,6 +118,67 @@ def model_info() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# What-if: "what would change this result?"
+# ---------------------------------------------------------------------------
+_TYPICAL = None
+_BINARY = {"IsDomainIP", "HasObfuscation", "IsHTTPS", "HasBrandOutsideDomain"}
+
+
+def _typical_values():
+    """10th/50th/90th percentile of each feature per class, built by
+    backend/tests/build_typical_values.py. Empty if the file is missing."""
+    global _TYPICAL
+    if _TYPICAL is None:
+        import json
+        path = os.path.join(_OUTPUTS, "feature_typical_values.json")
+        _TYPICAL = json.load(open(path)) if os.path.exists(path) else {}
+    return _TYPICAL
+
+
+def what_if_changes(vec, contrib, prediction, limit=3):
+    """For the `limit` features whose SHAP value supports the verdict, set
+    each one (alone) to a value typical of the opposite class and re-score.
+    Phishing/uncertain verdicts try legitimate values and keep the one that
+    lowers the score most; legitimate verdicts try phishing values and keep
+    the one that raises it most. Features already at a typical value are
+    skipped."""
+    typical = _typical_values()
+    if MODEL is None or not typical:
+        return []
+    towards_legit = prediction != "legitimate"
+    ref = typical["legitimate" if towards_legit else "phishing"]
+    order = np.argsort(-contrib if towards_legit else contrib)
+    base = float(MODEL.predict_proba(vec)[0][1])
+    out = []
+    for i in order:
+        if len(out) >= limit or (contrib[i] <= 0 if towards_legit else contrib[i] >= 0):
+            break
+        name = FEATURE_ORDER[i]
+        current = float(vec[0, i])
+        candidates = {0.0, 1.0} if name in _BINARY else set(ref.get(name, []))
+        candidates.discard(current)
+        best = None
+        for value in candidates:
+            changed = vec.copy()
+            changed[0, i] = value
+            score = float(MODEL.predict_proba(changed)[0][1])
+            if best is None or (score < best[1] if towards_legit else score > best[1]):
+                best = (value, score)
+        if best and (best[1] <= base - 0.005 if towards_legit else best[1] >= base + 0.005):
+            out.append({
+                "feature": name,
+                "current": round(current, 4),
+                "changed": round(best[0], 4),
+                "score_now": round(base, 4),
+                "score_changed": round(best[1], 4),
+                "model_result": ("phishing" if best[1] >= PHISH_THRESHOLD
+                                 else "suspicious" if best[1] >= UNCERTAIN_THRESHOLD
+                                 else "legitimate"),
+            })
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Explainers - lazily built the first time they're needed
 # ---------------------------------------------------------------------------
 _shap_explainer = None

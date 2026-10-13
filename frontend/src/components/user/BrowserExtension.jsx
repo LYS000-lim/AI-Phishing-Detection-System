@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { utcDate } from '../../dates.js'
 import { explainURL, myDetections } from '../../api.js'
 import DateRangeFilter from '../DateRangeFilter.jsx'
+import ShapChart from './ShapChart.jsx'
+import { formatDetectedValue } from './Scanner.jsx'
 
 // Pings the content script every installed/enabled extension injects on
 // this page (toast.js, document_start) and waits briefly for its reply.
@@ -245,6 +247,7 @@ export default function BrowserExtension() {
               <div style={{ marginTop: 14 }}>
                 <h3>Explainable AI</h3>
                 {xai.plain_text && <p className="xai-note">{xai.plain_text}</p>}
+                <ShapChart explain={xai} formatValue={formatDetectedValue} />
                 <div className="split-2">
                   <div>
                     <div className="cm-title">SHAP - top features</div>
