@@ -219,6 +219,7 @@ export const adminReportedURLs = (
   pageSize = 20,
   dateFrom = '',
   dateTo = '',
+  sort = 'newest',
 ) => {
   const params = new URLSearchParams()
 
@@ -228,11 +229,27 @@ export const adminReportedURLs = (
   if (q) params.set('q', q)
   if (dateFrom) params.set('date_from', dateFrom)
   if (dateTo) params.set('date_to', dateTo)
+  if (sort) params.set('sort', sort)
 
   return request(
     `/api/admin/reported-urls?${params.toString()}`
   )
 }
+
+// ------ Admin Global Block (blocked for all users) ------
+export const adminGlobalBlocks = (q = '', dateFrom = '', dateTo = '') => {
+  const params = new URLSearchParams()
+  if (q) params.set('q', q)
+  if (dateFrom) params.set('date_from', dateFrom)
+  if (dateTo) params.set('date_to', dateTo)
+  return request(`/api/admin/global-blocks?${params.toString()}`)
+}
+
+export const addGlobalBlock = (payload) =>
+  request('/api/admin/global-blocks', { method: 'POST', body: payload })
+
+export const removeGlobalBlock = (id) =>
+  request(`/api/admin/global-blocks/${id}`, { method: 'DELETE' })
 
 // ------ Admin Extension Reports ------
 

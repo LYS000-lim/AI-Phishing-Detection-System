@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import Integer, desc, func
 from sqlalchemy.orm import Session, joinedload
 
+from .allowlist import is_trusted
 from .auth import hash_password, require_admin
 from .database import get_db
 from .features import FEATURE_ORDER
@@ -25,6 +26,7 @@ from .ml_state import (
 )
 from .models import BlockedURL, Detection, ReportedURL, ExtensionReport, User, UserBlockedURL
 from .phishing_type import detect_brand
+from .reputation import domain_reputation
 from .routes_user import (
     _feature_distribution, _predict_and_log, _resolve_window, _source_distribution,
 )
@@ -609,6 +611,7 @@ def reported_urls(
     q: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    sort: str = "newest",
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
@@ -673,6 +676,15 @@ def reported_urls(
         )
 
 
+    # How many reports (both sources) name the same hostname, so the admin
+    # can sort by the most-reported sites and decide what to block globally.
+    report_counts = Counter(_hostname(x["url"]) for x in items)
+    blocked_domains = {d for (d,) in db.query(BlockedURL.domain).all()}
+    for x in items:
+        host = _hostname(x["url"])
+        x["report_count"] = report_counts[host]
+        x["globally_blocked"] = host in blocked_domains
+
     # Search + date filters
     if q:
         items = [
@@ -692,6 +704,9 @@ def reported_urls(
         key=lambda x: x["created_at"],
         reverse=True,
     )
+    # "Most reported": stable sort keeps newest first within a tie.
+    if sort == "most_reported":
+        items.sort(key=lambda x: x["report_count"], reverse=True)
 
 
     total = len(items)
@@ -746,15 +761,22 @@ def reported_urls(
 # Extension Report Approval
 # ---------------------------------------------------------------------------
 
+def _hostname(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw.lower().startswith(("http://", "https://")):
+        raw = "http://" + raw
+    try:
+        return (urlparse(raw).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
 def _save_to_blocklist(db: Session, url: str, reason: Optional[str],
                        source: str, attack_type: Optional[str]) -> None:
     """"Save in Database": this is what actually makes the URL enforced as
     blocked going forward (see GET /api/extension/check-blacklist). Shared by
     extension reports and website (User Report) reports."""
-    raw = url.strip()
-    if not raw.lower().startswith(("http://", "https://")):
-        raw = "http://" + raw
-    domain = (urlparse(raw).hostname or "").lower()
+    domain = _hostname(url)
     if not domain:
         return
     existing = (
@@ -930,6 +952,85 @@ def admin_unblock_user_url(
     row = db.query(UserBlockedURL).filter(UserBlockedURL.id == block_id).first()
     if not row:
         raise HTTPException(404, "Blocked URL not found")
+    db.delete(row)
+    db.commit()
+
+# ---------------------------------------------------------------------------
+# Global Block: the admin pastes any URL (from the most-reported list or any
+# other source) and blocks its hostname for all users. Same BlockedURL table
+# the extension checks, so no extension change is needed. Only the admin can
+# unblock.
+# ---------------------------------------------------------------------------
+
+@router.get("/global-blocks")
+def global_blocks(
+    q: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    query = db.query(BlockedURL)
+    if q:
+        query = query.filter(BlockedURL.domain.ilike(f"%{q.strip().lower()}%"))
+    start, end = _date_range_bounds(date_from, date_to)
+    if start:
+        query = query.filter(BlockedURL.created_at >= start)
+    if end:
+        query = query.filter(BlockedURL.created_at <= end)
+    rows = query.order_by(desc(BlockedURL.created_at)).all()
+    return [
+        {
+            "id": r.id, "url": r.url, "domain": r.domain, "reason": r.reason,
+            "source": r.source, "attack_type": r.attack_type,
+            "created_at": r.created_at,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/global-blocks", status_code=status.HTTP_201_CREATED)
+def add_global_block(
+    payload: dict,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    url = str(payload.get("url") or "").strip()
+    domain = _hostname(url)
+    if not domain or "." not in domain:
+        raise HTTPException(400, "Enter a valid URL or domain, e.g. https://example.com/login")
+    if db.query(BlockedURL).filter(BlockedURL.domain == domain).first():
+        raise HTTPException(409, f"{domain} is already blocked for all users")
+
+    # Blocking a well-known site would break it for every user, so the admin
+    # must confirm first (the page re-sends with confirm=true).
+    if not payload.get("confirm"):
+        trusted = is_trusted(url)
+        rep = domain_reputation(url)
+        if trusted or rep["reputable"]:
+            why = rep["reason"] if rep["reputable"] else f"{domain} is on the trusted allowlist"
+            return {"needs_confirm": True, "domain": domain,
+                    "warning": f"{why}. Blocking it will stop every user from opening it."}
+
+    reason = str(payload.get("reason") or "").strip() or None
+    attack_type = str(payload.get("attack_type") or "").strip()[:64] or None
+    row = BlockedURL(url=url, domain=domain, risk_level="High", reason=reason,
+                     source="Admin (Manual)", attack_type=attack_type)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "domain": row.domain, "message": f"{domain} blocked for all users"}
+
+
+@router.delete("/global-blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_global_block(
+    block_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    row = db.query(BlockedURL).filter(BlockedURL.id == block_id).first()
+    if not row:
+        raise HTTPException(404, "Global block not found")
     db.delete(row)
     db.commit()
 

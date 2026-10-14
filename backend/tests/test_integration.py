@@ -58,6 +58,65 @@ def test_website_report_admin_approve_blacklist(client, tc, admin_token, user_to
     assert after["blocked"] is True and after["reported_via"] == "PhishGuard Website"
 
 
+def test_admin_global_block_cycle(client, tc, admin_token, user_token):
+    tc("Global block", I,
+       "Admin pastes URL -> blocked for all users -> listed -> admin unblocks",
+       "POST /api/admin/global-blocks https://paste-phish.xyz/login?id=1",
+       "201, everyone blocked, duplicate 409, non-admin 403, unblocked after delete")
+    h = auth(admin_token)
+    add = client.post("/api/admin/global-blocks", headers=h,
+                      json={"url": "https://paste-phish.xyz/login?id=1", "attack_type": "Credential Theft"})
+    dup = client.post("/api/admin/global-blocks", headers=h, json={"url": "paste-phish.xyz"})
+    listed = client.get("/api/admin/global-blocks", headers=h).json()
+    anon = client.get("/api/extension/check-blacklist", params={"url": "http://paste-phish.xyz/x"}).json()
+    signed_in = client.get("/api/extension/check-blacklist", params={"url": "http://paste-phish.xyz/"},
+                           headers=auth(user_token)).json()
+    forbidden = client.post("/api/admin/global-blocks", headers=auth(user_token), json={"url": "a-site.xyz"})
+    removed = client.delete(f"/api/admin/global-blocks/{add.json()['id']}", headers=h)
+    cleared = client.get("/api/extension/check-blacklist", params={"url": "http://paste-phish.xyz/x"}).json()
+    tc.actual(f"add={add.status_code} domain={add.json().get('domain')}; dup={dup.status_code}; "
+              f"listed={len(listed)} source={listed[0]['source']}; anon blocked={anon['blocked']}; "
+              f"user blocked={signed_in['blocked']}; non-admin={forbidden.status_code}; "
+              f"delete={removed.status_code}; after={cleared['blocked']}")
+    assert add.status_code == 201 and add.json()["domain"] == "paste-phish.xyz"
+    assert dup.status_code == 409
+    assert len(listed) == 1 and listed[0]["source"] == "Admin (Manual)"
+    assert anon["blocked"] is True and anon["blocked_by"] == "admin"
+    assert signed_in["blocked"] is True
+    assert forbidden.status_code == 403
+    assert removed.status_code == 204 and cleared["blocked"] is False
+
+
+def test_admin_global_block_validation(client, tc, admin_token):
+    tc("Global block", I, "Invalid URL rejected; well-known site needs confirmation",
+       "'not a url', then https://www.google.com without/with confirm",
+       "400; needs_confirm then 201")
+    h = auth(admin_token)
+    bad = client.post("/api/admin/global-blocks", headers=h, json={"url": "not a url"})
+    warn = client.post("/api/admin/global-blocks", headers=h, json={"url": "https://www.google.com"})
+    forced = client.post("/api/admin/global-blocks", headers=h,
+                         json={"url": "https://www.google.com", "confirm": True})
+    tc.actual(f"bad={bad.status_code}; first={warn.status_code} needs_confirm={warn.json().get('needs_confirm')}; "
+              f"confirmed={forced.status_code}")
+    assert bad.status_code == 400
+    assert warn.json().get("needs_confirm") is True
+    assert forced.status_code == 201
+
+
+def test_reported_urls_count_and_sort(client, tc, admin_token):
+    tc("Report & blacklist", I, "Reported URLs show per-site report count and sort by most reported",
+       "3 reports of many-reports.xyz, 1 of once.xyz; sort=most_reported", "first row count=3")
+    for path in ("/a", "/b", "/c"):
+        client.post("/api/extension/report", json={"url": f"http://many-reports.xyz{path}"})
+    client.post("/api/extension/report", json={"url": "http://once.xyz"})
+    data = client.get("/api/admin/reported-urls", params={"sort": "most_reported"},
+                      headers=auth(admin_token)).json()
+    first = data["items"][0]
+    tc.actual(f"first={first['url']} count={first['report_count']}; last count={data['items'][-1]['report_count']}")
+    assert first["report_count"] == 3 and "many-reports.xyz" in first["url"]
+    assert data["items"][-1]["report_count"] == 1
+
+
 def test_user_block_list_cycle(client, tc, user_token):
     tc("User block list", I,
        "Extension user-block -> my-blocked-urls -> unblock -> check-blacklist clear",
