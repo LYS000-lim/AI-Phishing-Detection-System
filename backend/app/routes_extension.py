@@ -171,13 +171,39 @@ def check_blacklist(
     Blacklist lookup used by the extension before/instead of running the
     ML model, so admin-confirmed phishing domains are blocked immediately
     on every future visit. When the extension is signed in, the user's own
-    "Block URL" list (saved to their account) is checked too.
+    "Block URL" list (saved to their account) is checked too. The admin
+    blacklist is checked first: it applies to every user and cannot be
+    lifted from the user's account, so its block page is the one to show.
     """
 
     domain = _hostname(url)
 
     if not domain:
         return {"blocked": False}
+
+    entry = (
+        db.query(BlockedURL)
+        .filter(BlockedURL.domain == domain)
+        .first()
+    )
+
+    if entry:
+        return {
+            "blocked": True,
+            "blocked_by": "admin",
+            # The admin approves the block on the PhishGuard website; source is
+            # where the original report was made.
+            "platform": "PhishGuard Admin Blacklist",
+            "reported_via": entry.source,
+            # Pasted in on the Global Block tab rather than approved from a report.
+            "global_block": entry.source == "Admin (Manual)",
+            "domain": entry.domain,
+            "risk_level": entry.risk_level,
+            "attack_type": entry.attack_type,
+            "reason": entry.reason,
+            "blocked_at": entry.created_at,
+            "user_checked": user is not None,
+        }
 
     if user is not None:
         own = (
@@ -199,31 +225,9 @@ def check_blacklist(
                 "user_checked": True,
             }
 
-    entry = (
-        db.query(BlockedURL)
-        .filter(BlockedURL.domain == domain)
-        .first()
-    )
-
-    if not entry:
-        # user_checked tells the extension the account block list was really
-        # consulted (valid token), so it may drop a stale local copy.
-        return {"blocked": False, "user_checked": user is not None}
-
-    return {
-        "blocked": True,
-        "blocked_by": "admin",
-        # The admin approves the block on the PhishGuard website; source is
-        # where the original report was made.
-        "platform": "PhishGuard Admin Blacklist",
-        "reported_via": entry.source,
-        "domain": entry.domain,
-        "risk_level": entry.risk_level,
-        "attack_type": entry.attack_type,
-        "reason": entry.reason,
-        "blocked_at": entry.created_at,
-        "user_checked": user is not None,
-    }
+    # user_checked tells the extension the account block list was really
+    # consulted (valid token), so it may drop a stale local copy.
+    return {"blocked": False, "user_checked": user is not None}
 
 
 # ==========================================================

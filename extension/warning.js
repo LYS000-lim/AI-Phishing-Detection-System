@@ -90,12 +90,17 @@ function renderUnreachable(card, data, tabId) {
 function renderBlocked(card, data) {
     const risk = data.riskLevel || "High";
     const byUser = data.blockedBy === "user";
+    // Older backends don't send globalBlock, so fall back to the source label.
+    const globalBlock = !byUser && (data.globalBlock || data.reportedVia === "Admin (Manual)");
     const category = data.attackType && data.attackType !== "Unknown" ? data.attackType : null;
     const host = data.domain || data.url;
 
     const platform = byUser
         ? `You blocked this website using the <b>PhishGuard AI Chrome Extension</b>
            ("Block This Website" on the phishing warning page).`
+        : globalBlock
+        ? `The <b>PhishGuard AI Administrator</b> blocked this website for
+           <b>all users</b> (Global Block).`
         : `The <b>PhishGuard AI Administrator</b> added this website to the
            PhishGuard Admin Blacklist${data.reportedVia
                ? ` after reviewing a report submitted via the <b>${pgEscape(data.reportedVia)}</b>`
@@ -110,6 +115,8 @@ function renderBlocked(card, data) {
     if (!reasons.length) {
         reasons.push(byUser
             ? "PhishGuard AI detected this website as phishing and you chose to block it."
+            : globalBlock
+            ? "An administrator manually blocked this website for all PhishGuard AI users."
             : "An administrator reviewed a phishing report for this website and confirmed it.");
     }
 

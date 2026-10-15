@@ -2,8 +2,33 @@ import { useEffect, useState } from 'react'
 import { utcDate } from '../../dates.js'
 import { adminDetections, adminExtensionMonitoring } from '../../api.js'
 import DateRangeFilter from '../DateRangeFilter.jsx'
+import ExtensionInfo from '../ExtensionInfo.jsx'
 
 export default function AdminExtensionMonitoring() {
+  const [tab, setTab] = useState('monitoring')
+
+  return (
+    <>
+      <div className="page-header">
+        <h2>Browser Extension Monitoring</h2>
+        <p className="tagline">Detections made through the Chrome extension across all signed-in users, and the status and install guide for your own extension.</p>
+      </div>
+
+      <div className="seg-tabs">
+        <button className={tab === 'monitoring' ? 'active' : ''} onClick={() => setTab('monitoring')}>
+          Monitoring
+        </button>
+        <button className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>
+          My Extension
+        </button>
+      </div>
+
+      {tab === 'monitoring' ? <Monitoring /> : <ExtensionInfo admin />}
+    </>
+  )
+}
+
+function Monitoring() {
   const [summary, setSummary] = useState(null)
   const [rows, setRows] = useState([])
   const [page, setPage] = useState(1)
@@ -36,11 +61,6 @@ export default function AdminExtensionMonitoring() {
 
   return (
     <>
-      <div className="page-header">
-        <h2>Browser Extension Monitoring</h2>
-        <p className="tagline">System-wide view of detections made through the Chrome extension, across all signed-in users.</p>
-      </div>
-
       <section className="panel">
         <div className="filters" style={{ flexWrap: 'wrap', marginBottom: 0 }}>
           <DateRangeFilter

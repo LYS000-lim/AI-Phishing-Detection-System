@@ -294,13 +294,10 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
         });
     };
 
-    // 1. Locally blocked by this user ("Block URL") - signed-out only
-    if (!signedIn && await isLocallyBlocked(url)) {
-        await blockLocally();
-        return;
-    }
-
-    // 2. Admin-approved blacklist (+ the user's own account block list)
+    // 1. Admin-approved blacklist, then the user's own block list (the
+    // account list server-side, or this browser's list when signed out).
+    // The admin block comes first: it applies to every user and cannot be
+    // unblocked from the user's account, so that is the page to show.
     try {
         const res = await fetch(
             `${CHECK_BLACKLIST_URL}?url=${encodeURIComponent(url)}`,
@@ -322,6 +319,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
                 blockedBy: blacklist.blocked_by || (blacklist.by_user ? "user" : "admin"),
                 platform: blacklist.platform || null,
                 reportedVia: blacklist.reported_via || null,
+                globalBlock: blacklist.global_block === true,
                 riskLevel: blacklist.risk_level || "High",
                 attackType: blacklist.attack_type || null,
                 reason: blacklist.reason || null,
@@ -333,6 +331,11 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
             });
             return;
         }
+        // Locally blocked by this user ("Block URL") - signed-out only
+        if (!signedIn && await isLocallyBlocked(url)) {
+            await blockLocally();
+            return;
+        }
         // The account (not this browser) is the source of truth while
         // signed in: not blocked there means it was unblocked on the website.
         // user_checked guards against an expired token, where the server
@@ -342,13 +345,13 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
         }
     } catch (error) {
         console.error("PhishGuard blacklist check failed:", error);
-        if (signedIn && await isLocallyBlocked(url)) {
+        if (await isLocallyBlocked(url)) {
             await blockLocally();
             return;
         }
     }
 
-    // 3. ML analysis (and trusted-domain bypass, handled server-side)
+    // 2. ML analysis (and trusted-domain bypass, handled server-side)
     try {
         const headers = { "Content-Type": "application/json" };
         const auth = await chrome.storage.session.get("pgAuthToken");
