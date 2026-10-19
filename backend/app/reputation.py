@@ -155,7 +155,75 @@ HOSTING_HOSTS = {
     "sites.google.com", "docs.google.com", "drive.google.com", "script.google.com",
     "storage.cloud.google.com", "forms.office.com", "forms.microsoft.com",
     "onedrive.live.com", "1drv.ms", "sway.office.com", "gamma.app", "sites.sch.gr",
+    # Customer virtual machines and the old Netlify site domain: the
+    # allowlist trusts azure.com and netlify.com, which made phishing on
+    # these subdomains show as Trusted Website (2024-25 feeds: 138 URLs on
+    # *.cloudapp.azure.com, 43 on *.netlify.com).
+    "cloudapp.azure.com", "netlify.com",
 }
+
+# The platform's own pages on a domain listed above (netlify.com itself,
+# its dashboard and documentation) are not user content.
+PLATFORM_OWN_HOSTS = {
+    "netlify.com", "www.netlify.com", "app.netlify.com", "docs.netlify.com",
+    "answers.netlify.com",
+}
+
+# Document and file-sharing services that keep the reputation of their
+# parent domain. A link on them opens a document, form or file shown by the
+# service itself, not a web page written by the uploader (unlike website
+# builders such as sites.google.com or wixsite.com). Anyone with an account
+# can share on them, so they are never trusted by the allowlist, but the
+# 2024-25 phishing feeds (1.55 million URLs) contain little phishing on them:
+# sharepoint.com 59, readthedocs.io 6, box.com 3, docs.google.com 2,
+# drive.google.com, onedrive.live.com, Microsoft Forms, dropbox.com,
+# wetransfer.com and raw.githubusercontent.com 0 - against 560 on
+# sites.google.com, 3,457 on wixsite.com and 36,205 on pages.dev. (The
+# older PhiUSIIL data has 526 on docs.google.com: Google Forms phishing has
+# since moved to forms.gle short links, 121 in the feeds.) Genuine shared
+# documents on these services were shown as Phishing, because their long,
+# service-generated addresses look like phishing URLs to the model.
+# ml_state's reputable-site rule now shows such a link as Legitimate when
+# its address has no lure, with a note to check who shared it: phishing
+# inside a shared document cannot be seen from its URL.
+DOCUMENT_SERVICES = {
+    "sharepoint.com", "onedrive.live.com", "docs.google.com", "drive.google.com",
+    "forms.office.com", "forms.microsoft.com", "dropbox.com", "box.com",
+    "wetransfer.com", "readthedocs.io", "raw.githubusercontent.com",
+}
+
+# Link shorteners (and QR-code redirect services): the address hides where
+# the link leads, so its text says nothing about the destination.
+SHORTENERS = {
+    "bit.ly", "bitly.com", "bitly.ws", "bitly.cx", "bit.do", "tinyurl.com", "t.co", "is.gd",
+    "cutt.ly", "cutt.us", "rebrand.ly", "shorturl.at", "ow.ly", "rb.gy", "s.id", "short.gy",
+    "tiny.cc", "tiny.one", "tiny.us", "gg.gg", "surl.li", "alturl.com", "ppt.cc", "jii.li",
+    "cort.as", "lihi1.com", "abre.ai", "urlz.fr", "lnk.to", "forms.gle", "1drv.ms",
+    "qrco.de", "qr1.be", "uqr.to", "me-qr.com", "qrcodes.pro", "flowcode.com",
+    "lnkd.in", "reurl.cc", "lihi.cc", "vo.la", "b.link", "linklyhq.com",
+    "encurtador.com.br", "encurtador.dev", "t.ly", "u.to",
+}
+
+
+def _load_abused() -> frozenset:
+    path = os.path.join(_HERE, "abused_platforms.txt")
+    if not os.path.exists(path):
+        return frozenset()
+    with open(path, encoding="utf-8") as fh:
+        return frozenset(line.strip() for line in fh if line.strip() and not line.startswith("#"))
+
+
+# Well-established domains whose subdomains are handed out to other people
+# (site builders, web hosts, CDNs, mailing and link-tracking tools), found
+# in the phishing data rather than picked by hand: known phishing uses 3 or
+# more different subdomains of them (notebooks/build_abused_platforms.py
+# writes abused_platforms.txt). Their rank describes the platform, not a
+# customer's subdomain, so ml_state's reputable-site rule skips them.
+ABUSED_PLATFORMS = _load_abused()
+
+
+def _matches(host: str, names) -> bool:
+    return any(host == h or host.endswith("." + h) for h in names)
 
 
 def is_user_content_host(url: str) -> bool:
@@ -163,7 +231,7 @@ def is_user_content_host(url: str) -> bool:
     user-content subdomains of big companies). Used by the allowlist too,
     so "google.com is trusted" never extends to sites.google.com pages."""
     host = _host(url)
-    if not host:
+    if not host or host in PLATFORM_OWN_HOSTS:
         return False
     icann_reg = _extract_icann(host).top_domain_under_public_suffix
     private_reg = _extract_private(host).top_domain_under_public_suffix
@@ -172,7 +240,7 @@ def is_user_content_host(url: str) -> bool:
         or icann_reg in HOSTING_PLATFORMS
         # blogspot.<country> mirrors of Blogger (dropped from the bundled PSL)
         or icann_reg.split(".", 1)[0] == "blogspot"
-        or any(host == h or host.endswith("." + h) for h in HOSTING_HOSTS)
+        or _matches(host, HOSTING_HOSTS)
     )
 
 _ranks = None
@@ -204,18 +272,23 @@ def _host(url: str) -> str:
 def domain_reputation(url: str, max_rank: int = MAX_RANK) -> dict:
     """
     {"reputable": bool, "domain": registered domain, "rank": int|None,
-     "reason": short explanation}
+     "reason": short explanation, "shared": True on a DOCUMENT_SERVICES
+     host, "shortener": True on a SHORTENERS host, "abused": True when the
+     domain is in ABUSED_PLATFORMS}
     """
     host = _host(url)
-    private_reg = _extract_private(host).top_domain_under_public_suffix if host else ""
     icann_reg = _extract_icann(host).top_domain_under_public_suffix if host else ""
-    out = {"reputable": False, "domain": icann_reg or host, "rank": None, "reason": ""}
+    out = {"reputable": False, "domain": icann_reg or host, "rank": None, "reason": "",
+           "shared": False, "shortener": bool(host) and _matches(host, SHORTENERS),
+           "abused": icann_reg in ABUSED_PLATFORMS}
     if not icann_reg:
         out["reason"] = "no registered domain (IP address or local host)"
         return out
     if is_user_content_host(url):
-        out["reason"] = f"hosted on a shared platform ({icann_reg}) where anyone can publish"
-        return out
+        if not _matches(host, DOCUMENT_SERVICES):
+            out["reason"] = f"hosted on a shared platform ({icann_reg}) where anyone can publish"
+            return out
+        out["shared"] = True
     rank = _load_ranks().get(icann_reg)
     out["rank"] = rank
     if rank is not None and rank <= max_rank:

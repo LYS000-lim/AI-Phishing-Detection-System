@@ -1,12 +1,19 @@
 import os
 import re
+import warnings
+from functools import lru_cache
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import unquote_plus, urlparse
 
 import joblib
 import numpy as np
 
-from .features import FEATURE_ORDER
+from .features import FEATURE_ORDER, feature_vector
+
+# The model was fitted on a DataFrame but is always called with plain arrays
+# in FEATURE_ORDER; scikit-learn printed this warning on every prediction,
+# flooding the server log (thousands of lines per explanation).
+warnings.filterwarnings("ignore", message="X does not have valid feature names")
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _OUTPUTS = os.path.join(_HERE, "..", "..", "outputs")
@@ -18,6 +25,12 @@ def _load(name):
 
 
 MODEL = _load("deployment_model.joblib")
+# The forest was trained with n_jobs=-1, so every single-URL prediction
+# started a pool of threads: about 30 ms per call instead of about 10 ms,
+# and one scan with its explanation makes many calls. The predictions are
+# identical either way.
+if MODEL is not None and hasattr(MODEL, "n_jobs"):
+    MODEL.n_jobs = 1
 METRICS = _load("deployment_metrics.joblib") or {}
 LIME_BG = np.load(os.path.join(_OUTPUTS, "lime_background.npy"))
 
@@ -56,9 +69,124 @@ def _http_rule_threshold(url):
     return min(HTTP_RULE_PATH_THRESHOLD, UNCERTAIN_THRESHOLD) if has_path else UNCERTAIN_THRESHOLD
 
 
+# ---------------------------------------------------------------------------
+# Reputable-site rule
+# ---------------------------------------------------------------------------
+# PhiUSIIL's legitimate URLs are bare homepages: after canonicalisation 15%
+# of them have more than two host labels (mostly country endings such as
+# .com.my) against 58% of its phishing, and none has a path. The model
+# therefore reads a real subdomain (login., docs., journals.) and a long,
+# site-generated path (document IDs, encoded folder names) as phishing
+# evidence: onlinelibrary.wiley.com alone scores 0.95 and a SharePoint folder
+# link 0.996. On a well-established domain those parts are chosen by the
+# site itself, so on their own they are not evidence of phishing.
+#
+# An https:// URL that would otherwise be Suspicious becomes Legitimate
+# (legit_reason "reputable_site") when ALL of these hold:
+#   - the domain is in the Tranco top HTTP_RULE_MAX_RANK (the HTTP rule's
+#     stricter cut-off) and is not one of reputation.ABUSED_PLATFORMS, whose
+#     subdomains belong to other people (a DOCUMENT_SERVICES host such as
+#     SharePoint or Google Docs is allowed, with a "check who shared it"
+#     note);
+#   - the model would not warn about the site's own homepage (score below
+#     the Suspicious threshold; google.com.my scores 0.52 only because
+#     .com.my adds a label);
+#   - the address carries no lure (lure_signals): login or payment wording,
+#     another company's brand name, a link to another website, a user@
+#     prefix or a page in the website software's folders (wp-admin ...) -
+#     what a phishing page on a shared or hacked site needs to deceive.
+# Like the HTTP rule, it cannot recognise a hacked reputable site whose
+# address contains none of these, nor phishing in a shared document.
+REPUTABLE_SITE_MAX_SCORE = UNCERTAIN_THRESHOLD
+_EMBEDDED_HOST = re.compile(r"(?:https?:/+|www\.)([a-z0-9][a-z0-9.-]*\.[a-z]{2,})", re.I)
+# Folders of the website software that visitors never open as pages: a page
+# there is how phishing hides on a hacked WordPress or shared-hosting site.
+_SOFTWARE_FOLDER = re.compile(
+    r"/(?:wp-includes|wp-admin|wp-content/(?:plugins|themes)|\.well-known|cgi-bin)/", re.I)
+
+
+@lru_cache(maxsize=4096)
+def homepage_score(domain: str) -> float:
+    """Model score of the domain's own homepage, https://<domain>."""
+    return float(MODEL.predict_proba(feature_vector("https://" + domain))[0][1])
+
+
+def lure_signals(url: str, domain: str) -> list:
+    """Signs of a phishing lure in the parts of an address that a site or
+    its users choose (subdomain, path, query and fragment), as short
+    phrases. An empty list means none was found."""
+    from .brands import (FEED_BRANDS, MODEL_BRANDS, MY_BRANDS, impersonated_brand,
+                         lookalike_brand, malaysian_brand)
+    from .features import _tokens, suspicious_word_count
+    from .reputation import _extract_icann
+    parsed = urlparse(url.strip())
+    host = (parsed.hostname or "").lower()
+    sub = host[: -len(domain)].rstrip(".") if domain and host.endswith(domain) else host
+    rest = " ".join(unquote_plus(part) for part in (parsed.path, parsed.query, parsed.fragment) if part)
+    text = f"{sub} {rest}".lower()
+    found = []
+    if suspicious_word_count("x://" + text):
+        found.append("login or payment wording")
+    tokens = set(_tokens(text))
+    names = set(FEED_BRANDS) | set(MY_BRANDS) | {a for m in MODEL_BRANDS.values() for a in m["aliases"]}
+    own = domain.split(".")[0]
+    if (any(len(n) >= 4 and n in tokens and n not in own for n in names)
+            or impersonated_brand(url) or malaysian_brand(url) or lookalike_brand(url)):
+        found.append("another company's brand name")
+    for match in _EMBEDDED_HOST.finditer(rest):
+        other = _extract_icann(match.group(1).lower()).top_domain_under_public_suffix
+        if other and other != domain:
+            found.append(f"a link to another website ({other})")
+            break
+    if parsed.username is not None:
+        found.append("a user@ prefix that hides the real host")
+    if _SOFTWARE_FOLDER.search(parsed.path or ""):
+        found.append("a page hidden in the website software's folders")
+    return found
+
+
+def _apply_stage2(result: dict, rep: dict, url: str) -> None:
+    """Stage 2 (stage2.py): the URL score combined with the domain's age
+    decides the verdict level when the age is known (in place)."""
+    from . import stage2
+    from .reputation import is_user_content_host
+    if rep.get("shortener") or is_user_content_host(url):
+        return
+    s2 = stage2.score(result["p_phish"], rep.get("domain", ""))
+    if s2 is None:
+        return
+    result["stage2"] = s2
+    before, after = result["prediction"], s2["level"]
+    if after == "legitimate" and before != "legitimate":
+        # A hacked old website keeps its age, so a strong lure in the
+        # address (another company's brand, a link to another website, a
+        # user@ prefix, a page in the site software's folders) keeps the
+        # result at Suspicious. Login wording alone does not: genuine login
+        # pages use it too.
+        lures = lure_signals(url, rep.get("domain", ""))
+        if any(not lure.startswith("login or payment") for lure in lures):
+            result["lures"] = lures
+            after = "uncertain"
+    if before == after:
+        return
+    order = {"legitimate": 0, "uncertain": 1, "phishing": 2}
+    raised = order[after] > order[before]
+    s2["changed"] = "raised" if raised else "lowered"
+    result.update(prediction=after, legit_reason=None, escalated_by=None,
+                  risk={"phishing": "High", "uncertain": "Medium", "legitimate": "Low"}[after],
+                  uncertain_reason=("new_domain" if raised else "established_domain") if after == "uncertain" else None)
+    if after == "phishing":
+        result["escalated_by"] = "new_domain"
+    elif after == "legitimate":
+        result["legit_reason"] = "established_domain"
+
+
 def classify_vec(vec, features, url=None):
     """explanations.classify with the deployed model and tuned thresholds,
-    then the domain-reputation cap: a "phishing" verdict on a well-
+    then stage 2 (stage2.py: the URL score combined with the domain's age,
+    when the age is known - uncertain_reason / escalated_by "new_domain",
+    uncertain_reason / legit_reason "established_domain" when it changes
+    the verdict level), then the domain-reputation cap: a "phishing" verdict on a well-
     established domain (reputation.py) becomes "uncertain" (shown as
     Suspicious) with uncertain_reason "reputable_domain".
 
@@ -72,23 +200,41 @@ def classify_vec(vec, features, url=None):
     dynamic-DNS / shortener platform). Phishing verdicts and https:// URLs
     are never changed.
 
-    Brand rule (brands.py): a known phishing-target brand in the hostname of
-    a domain that is not well established raises the verdict one step -
-    legitimate -> uncertain (uncertain_reason "brand_impersonation"),
-    uncertain -> phishing (escalated_by "brand_impersonation")."""
+    Reputable-site rule (see above): a Suspicious https:// URL on a
+    well-established domain becomes "legitimate" (legit_reason
+    "reputable_site") when the site's own homepage scores as legitimate and
+    the address carries no lure.
+
+    Short-link rule: a link on a URL shortener (reputation.SHORTENERS) hides
+    its destination, so it is "uncertain" (uncertain_reason "short_link")
+    whatever the model scored.
+
+    Brand rule (brands.py): a known phishing-target brand (FEED_BRANDS or
+    MY_BRANDS) in the hostname of a domain that is not well established
+    raises the verdict one step - legitimate -> uncertain (uncertain_reason
+    "brand_impersonation"), uncertain -> phishing (escalated_by
+    "brand_impersonation"). A look-alike spelling of a brand counts the
+    same way ("lookalike" holds the imitating text): a one-letter
+    misspelling raises the verdict one step, while look-alike characters
+    (g00gle, paypa1, punycode homographs) make it phishing."""
     from .explanations import classify, is_https_only_verdict
-    from .brands import display_name, impersonated_brand
+    from .brands import brand_display, impersonated_brand, lookalike_brand, malaysian_brand
     from .reputation import HTTP_RULE_MAX_RANK, domain_reputation
     result = classify(vec, features, MODEL, PHISH_THRESHOLD, UNCERTAIN_THRESHOLD)
     result["reputation"] = None
     result["legit_reason"] = None
     result["escalated_by"] = None
     result["brand"] = None
+    result["lookalike"] = None
+    result["lures"] = []
+    result["stage2"] = None
     if url:
         rep = domain_reputation(url)
         result["reputation"] = rep
+        _apply_stage2(result, rep, url)
         if result["prediction"] == "phishing" and rep["reputable"]:
-            result.update(prediction="uncertain", risk="Medium", uncertain_reason="reputable_domain")
+            result.update(prediction="uncertain", risk="Medium", uncertain_reason="reputable_domain",
+                          escalated_by=None)
         if (result["prediction"] == "uncertain" and rep["reputable"]
                 and rep["rank"] <= HTTP_RULE_MAX_RANK
                 and url.strip().lower().startswith("http://")
@@ -96,15 +242,34 @@ def classify_vec(vec, features, url=None):
                 and is_https_only_verdict(vec, MODEL, _http_rule_threshold(url))):
             result.update(prediction="legitimate", risk="Low", uncertain_reason=None,
                           legit_reason="http_reputable")
-        brand = impersonated_brand(url)
-        if brand and not rep["reputable"] and result["prediction"] != "phishing":
-            result["brand"] = display_name(brand)
-            if result["prediction"] == "legitimate":
+        if (result["prediction"] == "uncertain" and rep["reputable"]
+                and rep["rank"] <= HTTP_RULE_MAX_RANK
+                and (rep["shared"] or not rep["abused"])
+                and result["uncertain_reason"] in ("reputable_domain", "borderline", "established_domain")
+                and url.strip().lower().startswith("https://")
+                and homepage_score(rep["domain"]) < REPUTABLE_SITE_MAX_SCORE):
+            # "lures" lets the explanation name what kept the warning.
+            result["lures"] = lure_signals(url, rep["domain"])
+            if not result["lures"]:
+                result.update(prediction="legitimate", risk="Low", uncertain_reason=None,
+                              legit_reason="reputable_site")
+        parsed = urlparse(url.strip())
+        if rep.get("shortener") and ((parsed.path or "").strip("/") or parsed.query):
+            result.update(prediction="uncertain", risk="Medium", uncertain_reason="short_link",
+                          legit_reason=None)
+            return result
+        brand = impersonated_brand(url) or malaysian_brand(url)
+        lookalike = None if brand else lookalike_brand(url)
+        if (brand or lookalike) and not rep["reputable"] and result["prediction"] != "phishing":
+            result["brand"] = brand_display(brand or lookalike[0])
+            if lookalike:
+                result["lookalike"] = lookalike[1]
+            if result["prediction"] == "legitimate" and not (lookalike and lookalike[2] == "characters"):
                 result.update(prediction="uncertain", risk="Medium",
                               uncertain_reason="brand_impersonation", legit_reason=None)
             else:
                 result.update(prediction="phishing", risk="High", uncertain_reason=None,
-                              escalated_by="brand_impersonation")
+                              legit_reason=None, escalated_by="brand_impersonation")
     return result
 
 

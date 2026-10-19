@@ -175,17 +175,21 @@ def _brand_analysis(host: str) -> dict:
                 "typo_token": typo_token,
             })
 
-    # Brands phishers target most in recent feeds (brands.py) - explanation
-    # only; the model's own brand feature keeps using BRANDS above.
+    # Brands phishers target most in recent feeds, Malaysian brands and
+    # look-alike spellings (brands.py) - explanation only; the model's own
+    # brand feature keeps using BRANDS above.
     if not findings:
-        from .brands import FINANCIAL, display_name, impersonated_brand
-        extra = impersonated_brand("http://" + host)
-        if extra:
+        from .brands import (brand_display, impersonated_brand, is_financial,
+                             lookalike_brand, malaysian_brand)
+        extra = impersonated_brand("http://" + host) or malaysian_brand("http://" + host)
+        lookalike = None if extra else lookalike_brand("http://" + host)
+        if extra or lookalike:
+            name = extra or lookalike[0]
             findings.append({
-                "brand": display_name(extra),
-                "financial": extra in FINANCIAL,
+                "brand": brand_display(name),
+                "financial": is_financial(name),
                 "exact_alias": extra,
-                "typo_token": None,
+                "typo_token": lookalike[1] if lookalike else None,
             })
 
     # Prefer a financial brand when several brand-like strings are present.

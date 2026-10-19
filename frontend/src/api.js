@@ -139,7 +139,8 @@ export const adminDetections = (
   attackType = '',
   dateFrom = '',
   dateTo = '',
-  source = ''
+  source = '',
+  mine = false
 ) => {
   const params = new URLSearchParams()
 
@@ -153,6 +154,7 @@ export const adminDetections = (
   if (dateFrom) params.set('date_from', dateFrom)
   if (dateTo) params.set('date_to', dateTo)
   if (source) params.set('source', source)
+  if (mine) params.set('mine', 'true')
 
   return request(
     `/api/admin/detections?${params.toString()}`

@@ -1,4 +1,4 @@
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 # SECURITY NOTE: this is a hard bypass -- a registrable-domain STRING match,
 # nothing else (no TLS/cert check, no content check, no live lookup). A
@@ -162,38 +162,46 @@ def _domain_candidates(host: str) -> list:
     return [".".join(parts[i:]) for i in range(0, len(parts) - reg_len + 1)]
 
 
-def is_trusted(url: str) -> bool:
-    """
-    Return True if the URL's host (or any of its parent domains, down to
-    its registrable domain) is on the trusted allowlist. Handles URLs with
-    or without a scheme.
-    """
-    if not url:
-        return False
-    try:
-        raw = url.strip()
-        if not raw.lower().startswith(("http://", "https://")):
-            raw = "http://" + raw
-        # Never trust user-published content, even on a trusted company's
-        # domain (e.g. sites.google.com, docs.google.com forms) - attackers
-        # host phishing pages there precisely because of the trusted name.
-        from .reputation import is_user_content_host
-        if is_user_content_host(raw):
-            return False
-        host = urlparse(raw).netloc
-        return any(c in TRUSTED_DOMAINS for c in _domain_candidates(host))
-    except Exception:
-        return False
+# Query parameters that services use to send the visitor on to another
+# address (google.com/url?q=..., facebook.com/l.php?u=..., Outlook Safe
+# Links ?url=...). On a trusted domain such a link opens the address in the
+# parameter, so that address is what has to be checked.
+_REDIRECT_PARAMS = {
+    "q", "u", "url", "uri", "link", "target", "dest", "destination", "redir",
+    "redirect", "redirect_uri", "redirect_url", "continue", "next", "goto",
+    "return", "returnurl", "return_url", "returnto", "r",
+}
 
 
-def matched_domain(url: str) -> str:
-    """Return the trusted domain that matched, or empty string if none."""
+def _with_scheme(url: str) -> str:
+    raw = (url or "").strip()
+    return raw if raw.lower().startswith(("http://", "https://")) else "http://" + raw
+
+
+def redirect_destination(url: str) -> str:
+    """The address on another website that a redirect parameter of the URL
+    points to, or empty string if there is none."""
+    parsed = urlparse(_with_scheme(url))
+    own = _registrable_domain(parsed.hostname or "")
+    for key, value in parse_qsl(parsed.query):
+        value = value.strip()
+        if key.lower() in _REDIRECT_PARAMS and value.lower().startswith(("http://", "https://", "//")):
+            dest = "https:" + value if value.startswith("//") else value
+            host = (urlparse(dest).hostname or "").lower()
+            if host and _registrable_domain(host) != own:
+                return dest
+    return ""
+
+
+def _listed_domain(url: str) -> str:
+    """The allowlist entry the URL's host falls under, or empty string."""
     if not url:
         return ""
     try:
-        raw = url.strip()
-        if not raw.lower().startswith(("http://", "https://")):
-            raw = "http://" + raw
+        raw = _with_scheme(url)
+        # Never trust user-published content, even on a trusted company's
+        # domain (e.g. sites.google.com, docs.google.com forms) - attackers
+        # host phishing pages there precisely because of the trusted name.
         from .reputation import is_user_content_host
         if is_user_content_host(raw):
             return ""
@@ -204,3 +212,42 @@ def matched_domain(url: str) -> str:
         return ""
     except Exception:
         return ""
+
+
+def matched_domain(url: str) -> str:
+    """Return the trusted domain that matched, or empty string if none. A
+    redirect link to a website that is not trusted itself never matches."""
+    domain = _listed_domain(url)
+    if domain:
+        dest = redirect_destination(url)
+        if dest and not matched_domain(dest):
+            return ""
+    return domain
+
+
+def is_trusted(url: str) -> bool:
+    """
+    Return True if the URL's host (or any of its parent domains, down to
+    its registrable domain) is on the trusted allowlist and the URL does
+    not redirect to an untrusted website. Handles URLs with or without a
+    scheme.
+    """
+    return bool(matched_domain(url))
+
+
+def unwrap_redirect(url: str, max_hops: int = 3) -> str:
+    """The address that a redirect link on a trusted service opens (a
+    Google search-result link, Outlook Safe Links, Facebook l.php), or the
+    URL itself when it is not one. Only allowlisted services are unwrapped:
+    on any other website the parameter may be decoration that the page
+    ignores, so that website is what gets checked."""
+    from .schemas import _validate_url
+    for _ in range(max_hops):
+        dest = redirect_destination(url) if _listed_domain(url) else ""
+        if not dest:
+            break
+        try:
+            url = _validate_url(dest)
+        except ValueError:
+            break
+    return url

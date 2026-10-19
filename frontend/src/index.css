@@ -557,6 +557,115 @@ body {
   line-height: 1.5;
 }
 
+.decision-steps ol {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.decision-steps li {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.decision-steps li.muted .step-text { color: var(--muted); }
+
+.decision-steps .step-no {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.decision-steps .step-tag {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.step-tag.tone-good { color: var(--good); border-color: var(--good); }
+.step-tag.tone-warn { color: var(--warn); border-color: var(--warn); }
+.step-tag.tone-bad { color: var(--bad); border-color: var(--bad); }
+.step-tag.tone-none { color: var(--muted); }
+
+@media (max-width: 600px) {
+  .decision-steps li { grid-template-columns: 26px minmax(0, 1fr); }
+  .decision-steps .step-tag { grid-column: 2; justify-self: start; }
+}
+
+.detail-panel > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.detail-panel[open] > summary { margin-bottom: 10px; }
+
+.stage2-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, auto) 1fr;
+  gap: 6px 16px;
+  margin: 10px 0 0;
+}
+
+.stage2-grid dt { color: var(--muted); }
+.stage2-grid dd { margin: 0; word-break: break-all; }
+.stage2-note { margin-top: 12px; }
+.stage2-note.raised { color: var(--warn); }
+.stage2-note.lowered { color: var(--good); }
+
+@media (max-width: 600px) {
+  .stage2-grid { grid-template-columns: 1fr; }
+}
+
+.page-check .page-final {
+  color: var(--muted);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.page-signals {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.page-signal {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  line-height: 1.5;
+}
+
+.page-signal-icon { width: 16px; flex: none; text-align: center; }
+.page-signal.risk .page-signal-icon { color: var(--bad); }
+.page-signal.safe .page-signal-icon { color: var(--good); }
+.page-signal.info .page-signal-icon { color: var(--muted); }
+
+.page-check .page-time {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 10px;
+}
+
+.result-redirect {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 4px;
+  word-break: break-all;
+}
+
 .result-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

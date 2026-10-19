@@ -40,13 +40,18 @@ def _is_private_ip(host: str) -> bool:
 
 def _validate_url(v: str) -> str:
     """Reject empty/garbage/oversized input before it reaches feature
-    extraction -- min_length=4 alone lets "asdf" through as a "URL"."""
+    extraction -- min_length=4 alone lets "asdf" through as a "URL".
+
+    An address typed without a scheme ("inti.edu.my") is returned as
+    https://, the scheme Chrome itself tries first for a typed address.
+    Checking it as http:// instead made the missing-HTTPS signal dominate
+    the verdict of well-known sites the user never asked about over HTTP."""
     v = v.strip()
     if not v or " " in v:
         raise ValueError("Enter a valid website URL, e.g. https://example.com")
     if len(v) > _URL_MAX_LEN:
         raise ValueError(f"URL too long (max {_URL_MAX_LEN} characters)")
-    raw = v if v.lower().startswith(("http://", "https://")) else "http://" + v
+    raw = v if v.lower().startswith(("http://", "https://")) else "https://" + v
     host = urlparse(raw).netloc.split("@")[-1].split(":")[0].lower()
     if host == "localhost" or host.endswith(".localhost") or _is_private_ip(host):
         # Same rule as the Chrome extension: local/LAN addresses have no
@@ -57,7 +62,7 @@ def _validate_url(v: str) -> str:
         )
     if not host or "." not in host:
         raise ValueError("Enter a valid website URL, e.g. https://example.com")
-    return v
+    return raw
 
 
 # ---------------------------------------------------------------------------
