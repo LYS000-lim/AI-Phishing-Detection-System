@@ -1,18 +1,19 @@
 import csv
 import io
-import os
-import tempfile
-import uuid
 from collections import Counter
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
-from reportlab.lib.styles import getSampleStyleSheet
 from datetime import date, datetime, time, timedelta, timezone
 from typing import List, Optional
 from urllib.parse import urlparse
+from xml.sax.saxutils import escape
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy import Integer, desc, func
 from sqlalchemy.orm import Session, joinedload
 
@@ -240,10 +241,13 @@ def _filtered_detections_query(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     source: Optional[str] = None,
+    own_user_id: Optional[int] = None,
 ):
     """Shared filter-building logic for the detection log listing, its
     analytics summary, and its CSV/PDF export - so all three always agree
-    on what "the current filters" means."""
+    on what "the current filters" means. own_user_id: the "My Scans" tab -
+    only that admin's own scans, from every source including the Admin
+    Scanner."""
     query = db.query(Detection, User).join(User, User.id == Detection.user_id)
     if q:
         query = query.filter(
@@ -255,13 +259,12 @@ def _filtered_detections_query(
         query = query.filter(Detection.risk_level == risk)
     if attack_type:
         query = query.filter(Detection.attack_type == attack_type)
-    # Detection Logs only covers the two real detection sources; the
-    # admin's own test scans (source="admin") are never listed, including
-    # under "All sources".
-    if source in ("website", "extension"):
+    # Every scan is listed, including admins' own Admin Scanner scans
+    # (source="admin"); the Admin Dashboard statistics still leave those out.
+    if own_user_id is not None:
+        query = query.filter(Detection.user_id == own_user_id)
+    if source in ("website", "extension", "admin"):
         query = query.filter(Detection.source == source)
-    else:
-        query = query.filter(Detection.source.in_(("website", "extension")))
 
     start, end = _date_range_bounds(date_from, date_to)
     if start:
@@ -303,12 +306,14 @@ def all_detections(
     attack_type: Optional[str] = None,
     date_from: Optional[str] = None,       # "YYYY-MM-DD"
     date_to: Optional[str] = None,
-    source: Optional[str] = None,          # "website" | "extension"
+    source: Optional[str] = None,          # "website" | "extension" (| "admin" with mine)
+    mine: bool = False,                    # "My Scans" tab: this admin's own scans
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ):
     query = _filtered_detections_query(
         db, q, result, risk, attack_type, date_from, date_to, source,
+        own_user_id=admin.id if mine else None,
     )
 
     total = query.count()
@@ -373,8 +378,9 @@ def export_detections(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     source: Optional[str] = None,
+    mine: bool = False,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ):
     """Download the currently-filtered Detection Logs as CSV or PDF."""
     if format not in ("csv", "pdf"):
@@ -382,6 +388,7 @@ def export_detections(
 
     query = _filtered_detections_query(
         db, q, result, risk, attack_type, date_from, date_to, source,
+        own_user_id=admin.id if mine else None,
     )
     rows = query.order_by(desc(Detection.created_at)).all()
 
@@ -413,27 +420,45 @@ def export_detections(
             headers={"Content-Disposition": f'attachment; filename="{filename_base}.csv"'},
         )
 
-    # PDF
-    file_path = os.path.join(tempfile.gettempdir(), f"{filename_base}_{uuid.uuid4().hex}.pdf")
-    doc = SimpleDocTemplate(file_path)
-    styles = getSampleStyleSheet()
-    content = [Paragraph("PhishGuard AI - Detection Report", styles["Title"])]
-
-    data = [headers] + [_row_values(d, u) for d, u in rows]
-    table = Table(data, repeatRows=1)
-    table.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.5, None),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("FONTSIZE", (0, 0), (-1, -1), 7),
-    ]))
-    content.append(table)
-    doc.build(content)
-
-    return FileResponse(
-        file_path,
-        media_type="application/pdf",
+    return _pdf_table_response(
+        "PhishGuard AI - Detection Report", headers,
+        [_row_values(d, u) for d, u in rows],
+        col_widths_mm=[100, 20, 16, 38, 32, 28, 20], url_cols={0},
         filename=f"{filename_base}.pdf",
     )
+
+
+def _pdf_table_response(title, headers, rows, col_widths_mm, url_cols, filename):
+    """One-table PDF (A4 landscape) built in memory. Every cell is a wrapped
+    Paragraph inside a fixed column width, and URL columns may break at any
+    character, so one long URL or detection reason can no longer stretch the
+    table off the page (it previously did, leaving the PDF unreadable)."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), title=title,
+                            leftMargin=12 * mm, rightMargin=12 * mm,
+                            topMargin=12 * mm, bottomMargin=12 * mm)
+    styles = getSampleStyleSheet()
+    text = ParagraphStyle("cell", parent=styles["BodyText"], fontSize=7.5, leading=9)
+    url = ParagraphStyle("url", parent=text, wordWrap="CJK")
+    head = ParagraphStyle("head", parent=text, fontName="Helvetica-Bold")
+    data = [[Paragraph(escape(h), head) for h in headers]]
+    data += [[Paragraph(escape(str(v)), url if i in url_cols else text) for i, v in enumerate(row)]
+             for row in rows]
+    table = Table(data, colWidths=[w * mm for w in col_widths_mm], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e5e7eb")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    doc.build([
+        Paragraph(escape(title), styles["Title"]),
+        Paragraph(f"{len(rows)} record(s), generated {datetime.now(timezone.utc):%d/%m/%Y %H:%M} UTC",
+                  styles["Normal"]),
+        table,
+    ])
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 # ---------------------------------------------------------------------------
@@ -1053,57 +1078,16 @@ def export_blacklist_pdf(
         query = query.filter(ReportedURL.created_at <= end)
     reports = query.order_by(desc(ReportedURL.created_at)).all()
 
-    file_path = "PhishGuard_Blacklist_Report.pdf"
-
-    doc = SimpleDocTemplate(file_path)
-
-    styles = getSampleStyleSheet()
-
-    content = []
-
-    content.append(
-        Paragraph(
-            "PhishGuard AI - Blacklist Database Report",
-            styles["Title"]
-        )
-    )
-
-    data = [
+    # Built in memory: the report was previously written to a fixed file in
+    # the server's working directory.
+    return _pdf_table_response(
+        "PhishGuard AI - Blacklist Database Report",
+        ["No", "URL", "Attack Type", "Detection Reason", "Date"],
         [
-            "No",
-            "URL",
-            "Attack Type",
-            "Detection Reason",
-            "Date"
-        ]
-    ]
-
-    for index, row in enumerate(reports, start=1):
-        data.append(
-            [
-                str(index),
-                row.url,
-                row.attack_type or "-",
-                row.detection_reason,
-                row.created_at.strftime("%Y-%m-%d")
-            ]
-        )
-
-    table = Table(data, repeatRows=1)
-
-    table.setStyle(
-        TableStyle([
-            ("GRID", (0,0), (-1,-1), 0.5, None),
-            ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ])
-    )
-
-    content.append(table)
-
-    doc.build(content)
-
-    return FileResponse(
-        file_path,
-        media_type="application/pdf",
-        filename="PhishGuard_Blacklist_Report.pdf"
+            [str(index), row.url, row.attack_type or "-", row.detection_reason or "-",
+             row.created_at.strftime("%Y-%m-%d")]
+            for index, row in enumerate(reports, start=1)
+        ],
+        col_widths_mm=[10, 80, 34, 127, 22], url_cols={1},
+        filename="PhishGuard_Blacklist_Report.pdf",
     )

@@ -3,14 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../AuthContext.jsx'
 
 export default function Logout() {
-  const { user, logout } = useAuth()
+  const { user, ready, logout } = useAuth()
   const nav = useNavigate()
-  const [name] = useState(user?.full_name || 'there')
+  const [name, setName] = useState('there')
   const [done, setDone] = useState(false)
 
   useEffect(() => {
+    // On a full page load the account is still being fetched from
+    // /api/auth/me; wait for it so the goodbye message can use the name.
+    if (!ready) return
+    if (user?.full_name) setName(user.full_name)
     logout().finally(() => setDone(true))
-  }, [logout])
+  }, [ready]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="auth-page">

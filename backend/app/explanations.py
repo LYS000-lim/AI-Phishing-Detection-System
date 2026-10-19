@@ -79,7 +79,7 @@ def is_https_only_verdict(vec: np.ndarray, model, threshold: float = 0.5) -> boo
     flipped to 1 (same URL, imagined served over HTTPS) and check whether
     that alone flips the verdict to legitimate.
 
-    IsHTTPS is the single most dominant feature (~36% importance) in this
+    IsHTTPS is the single most dominant feature (~26% importance) in this
     model, so a genuinely legitimate but plain-http:// site (informational
     pages, older institutional sites, some .gov pages) can get a confident
     "phishing" verdict on that basis alone. Rather than silently trusting or

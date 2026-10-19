@@ -16,6 +16,7 @@ const ATTACK_TYPES = [
 const SOURCE_LABELS = {
   website: '🌐 Website Scanner',
   extension: '🧩 Chrome Extension',
+  admin: '🛠 Admin Scanner',
 }
 
 const ATTACK_TYPE_INFO = {
@@ -27,6 +28,9 @@ const ATTACK_TYPE_INFO = {
 }
 
 export default function AdminDetectionLogs() {
+  // 'all': every user's scans (admin test scans excluded);
+  // 'mine': only this admin's own scans, Admin Scanner included.
+  const [view, setView] = useState('all')
   const [rows, setRows] = useState([])
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
@@ -68,7 +72,7 @@ export default function AdminDetectionLogs() {
 
   const load = () => {
     setLoading(true)
-    adminDetections(q, result, page, pageSize, risk, attackType, dateFrom, dateTo, source)
+    adminDetections(q, result, page, pageSize, risk, attackType, dateFrom, dateTo, source, view === 'mine')
     .then((data)=>{
         setRows(data.items)
         setTotal(data.total)
@@ -80,10 +84,11 @@ export default function AdminDetectionLogs() {
 
   useEffect(() => {
     load()
-  }, [result, risk, attackType, source, page])
+  }, [result, risk, attackType, source, page, view])
 
   const currentFilters = () => ({
     q, result, risk, attack_type: attackType, date_from: dateFrom, date_to: dateTo, source,
+    mine: view === 'mine' ? 'true' : '',
   })
 
   const download = async (format) => {
@@ -114,8 +119,25 @@ export default function AdminDetectionLogs() {
       <div className="page-header">
         <h2>Detection Logs</h2>
         <p className="tagline">
-          Every URL scan across all users. Filter, inspect and delete entries.
+          {view === 'mine'
+            ? 'Your own scans as an admin, including the Admin Scanner. Filter, inspect and delete entries.'
+            : 'Every URL scan across all users, admins included. Filter, inspect and delete entries.'}
         </p>
+      </div>
+
+      <div className="seg-tabs">
+        <button
+          className={view === 'all' ? 'active' : ''}
+          onClick={() => { setView('all'); setSource(''); setPage(1) }}
+        >
+          All Users
+        </button>
+        <button
+          className={view === 'mine' ? 'active' : ''}
+          onClick={() => { setView('mine'); setSource(''); setPage(1) }}
+        >
+          My Scans
+        </button>
       </div>
 
       <section className="panel">
@@ -164,6 +186,7 @@ export default function AdminDetectionLogs() {
               <option value="">All sources</option>
               <option value="website">Website Scanner</option>
               <option value="extension">Chrome Extension</option>
+              <option value="admin">Admin Scanner</option>
             </select>
             <DateRangeFilter
               from={dateFrom}

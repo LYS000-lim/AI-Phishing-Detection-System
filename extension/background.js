@@ -195,6 +195,12 @@ async function announceSafeToast(tabId, result) {
         url: result.url,
         verification: result.trusted_domain
             ? "Trusted Domain Allowlist"
+            : result.legit_reason === "page_check"
+            ? "AI Model + Live Page Check"
+            : result.legit_reason === "established_domain"
+            ? "AI Model + Domain Age"
+            : ["reputable_site", "http_reputable"].includes(result.legit_reason)
+            ? "AI Model + Domain Reputation"
             : "AI Detection Model",
         time: Date.now(),
     };
@@ -218,10 +224,26 @@ async function announceSafeToast(tabId, result) {
 // green "safe" toast (would falsely reassure) and NOT the red blocking
 // warning page (the model isn't actually confident this is phishing).
 async function announceUncertainToast(tabId, result) {
+    const lures = result.lures || [];
+    const lureText = lures.length <= 1
+        ? (lures[0] || "")
+        : `${lures.slice(0, -1).join(", ")} and ${lures[lures.length - 1]}`;
     const payload = {
         url: result.url,
-        reason: result.uncertain_reason === "brand_impersonation"
+        reason: result.uncertain_reason === "new_domain" && result.stage2
+            ? `This website's domain was registered on ${result.stage2.registered}. New domains are common for phishing - only enter details if you are sure who runs it.`
+            : result.uncertain_reason === "established_domain" && result.stage2
+            ? `Address pattern resembles phishing, but ${result.stage2.domain} has existed since ${result.stage2.registered.slice(0, 4)}. Check the address carefully.`
+            : result.uncertain_reason === "short_link"
+            ? `Short link (${result.reputation?.domain}): the address does not show which website it opens. Open it only if you trust who sent it.`
+            : lures.length > 0
+            ? `${result.reputation?.domain} is a well-established website, but the address contains ${lureText}, which phishing pages on shared or hacked websites use.`
+            : result.uncertain_reason === "brand_impersonation" && result.lookalike
+            ? `"${result.lookalike}" looks like a misspelling of "${result.brand}" on a domain that is not the brand's own. Open ${result.brand} through its official website.`
+            : result.uncertain_reason === "brand_impersonation"
             ? `Uses the brand name "${result.brand}" on a domain that is not the brand's own. Open ${result.brand} through its official website.`
+            : result.uncertain_reason === "reputable_domain" && result.reputation?.shared
+            ? `Hosted on ${result.reputation?.domain}, a well-established service where anyone can share documents or pages. Check who shared the link.`
             : result.uncertain_reason === "reputable_domain"
             ? `Address pattern resembles phishing, but ${result.reputation?.domain} is a well-established website. Check the domain carefully.`
             : result.uncertain_reason === "borderline"

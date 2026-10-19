@@ -5,12 +5,12 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from .allowlist import is_trusted, matched_domain
+from .allowlist import is_trusted, unwrap_redirect
 from .auth import current_user, try_current_user
 from .database import get_db
-from .features import extract_features, feature_vector
-from .ml_state import MODEL, classify_vec, model_info
+from .ml_state import MODEL, model_info
 from .phishing_type import detect_phishing_type
+from .pipeline import evaluate
 from .models import BlockedURL, Detection, ExtensionReport, User, UserBlockedURL
 from .schemas import ExtensionReportCreate, ExtensionReportOut
 
@@ -53,9 +53,23 @@ def extension_scan(
 
     ip = request.client.host if request.client else None
 
+    if MODEL is None and not is_trusted(unwrap_redirect(url)):
+        raise HTTPException(
+            status_code=503,
+            detail="Model unavailable",
+        )
+
+    # Same pipeline as the website scanner (routes_user._predict_and_log):
+    # redirect unwrapping, allowlist, model + rules, live page check.
+    try:
+        result = evaluate(url)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Could not process URL: {exc}")
+    checked, checked_url = result["checked"], result["checked_url"]
+
     # Reputation-list bypass: well-known trusted domains skip ML
     # classification entirely, matching routes_user.py's _predict_and_log.
-    if is_trusted(url):
+    if result["trusted"]:
         if user is not None:
             db.add(Detection(
                 user_id=user.id, url=url, prediction="legitimate", label=0,
@@ -72,24 +86,15 @@ def extension_scan(
             "risk_level": "Low",
             "model_used": "TrustedAllowlist",
             "trusted_domain": True,
-            "matched_domain": matched_domain(url),
+            "matched_domain": result["trusted"],
+            "checked_url": checked_url,
             "attack_type": None,
         }
 
-    if MODEL is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Model unavailable",
-        )
-
     try:
-        vec = feature_vector(url)
-
-        features = extract_features(url)
-
         # Same tuned thresholds + missing-HTTPS softening as the website
         # scanner (explanations.classify).
-        verdict = classify_vec(vec, features, url)
+        features, verdict = result["features"], result["verdict"]
         label = verdict["label"]
         phishing_probability = verdict["p_phish"]
         confidence = verdict["confidence"]
@@ -101,7 +106,7 @@ def extension_scan(
 
         if prediction == "phishing":
             attack_type = detect_phishing_type(
-                url,
+                checked,
                 features,
             )
 
@@ -135,6 +140,11 @@ def extension_scan(
             "legit_reason": verdict["legit_reason"],
             "escalated_by": verdict["escalated_by"],
             "brand": verdict["brand"],
+            "lookalike": verdict["lookalike"],
+            "lures": verdict["lures"],
+            "page_check": verdict["page_check"],
+            "stage2": verdict["stage2"],
+            "checked_url": checked_url,
             "reputation": verdict["reputation"],
             "attack_type": attack_type,
         }

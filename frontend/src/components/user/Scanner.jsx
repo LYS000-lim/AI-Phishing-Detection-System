@@ -3,15 +3,30 @@ import { explainURL, reportURL, scanURL } from '../../api.js'
 import ShapChart from './ShapChart.jsx'
 
 const pct = (value) => `${((value ?? 0) * 100).toFixed(1)}%`
+const joinList = (items) => (items.length <= 1
+  ? (items[0] || '')
+  : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`)
 
 // Categorizes the raw model confidence (max class probability, always >=50%
 // since the model picks the higher-probability class) into a plain-language
 // label + short explanation, so users see "Medium" instead of just "58%".
 // Display-only — does not change the underlying probability or verdict.
-const confidenceInfo = (value, prediction, uncertainReason, legitReason, escalatedBy) => {
+const confidenceInfo = (value, prediction, uncertainReason, legitReason, escalatedBy, lookalike) => {
   const value100 = (value ?? 0) * 100
   const noun = prediction === 'phishing' ? 'phishing' : 'legitimate'
 
+  if (escalatedBy === 'brand_impersonation' && lookalike) {
+    return {
+      label: 'High',
+      text: 'The address imitates a brand name with a look-alike spelling, a deliberate typosquatting trick, so the result is phishing even where the URL pattern alone looks normal.',
+    }
+  }
+  if (uncertainReason === 'brand_impersonation' && lookalike) {
+    return {
+      label: 'Low',
+      text: 'The URL pattern alone looks normal, but part of the address is a one-letter misspelling of a brand name, a common typosquatting pattern.',
+    }
+  }
   if (escalatedBy === 'brand_impersonation') {
     return {
       label: 'Medium',
@@ -22,6 +37,55 @@ const confidenceInfo = (value, prediction, uncertainReason, legitReason, escalat
     return {
       label: 'Low',
       text: "The URL pattern alone looks normal, but it uses a brand name on a domain that is not one of that brand's established websites.",
+    }
+  }
+
+  if (escalatedBy === 'new_domain') {
+    return {
+      label: 'High',
+      text: 'The URL pattern alone was not conclusive, but the website\'s domain was registered very recently. The stage-2 model, which combines both, scores it as phishing.',
+    }
+  }
+  if (uncertainReason === 'new_domain') {
+    return {
+      label: 'Low',
+      text: 'The URL pattern alone looks normal, but the website\'s domain is new, which is common for phishing websites.',
+    }
+  }
+  if (legitReason === 'established_domain') {
+    return {
+      label: 'Medium',
+      text: 'The URL pattern score is high, but the website\'s domain has existed for many years. The stage-2 model, which combines both, scores it below the warning level.',
+    }
+  }
+  if (uncertainReason === 'established_domain') {
+    return {
+      label: 'Low',
+      text: 'The URL pattern score alone would be phishing, but the domain has existed for many years, so the stage-2 model only rates it suspicious.',
+    }
+  }
+  if (escalatedBy === 'page_check') {
+    return {
+      label: 'High',
+      text: 'The live page check found the page itself doing what phishing pages do, so the result is phishing even though the URL score alone was only suspicious.',
+    }
+  }
+  if (legitReason === 'page_check') {
+    return {
+      label: 'Medium',
+      text: 'The URL alone looked suspicious, but the live page check found a normal page of this well-established website.',
+    }
+  }
+  if (legitReason === 'reputable_site') {
+    return {
+      label: 'Medium',
+      text: "The URL pattern score is high because of the address's length and structure, but the domain is well established, the model does not flag its homepage and the address has no phishing lure, so it is treated as legitimate.",
+    }
+  }
+  if (uncertainReason === 'short_link') {
+    return {
+      label: 'Low',
+      text: 'A short link hides the website it opens, so the URL pattern score says nothing about that website.',
     }
   }
 
@@ -153,6 +217,147 @@ const splitReason = (reason) => {
   }
 }
 
+// Plain label for a domain's age, used by the decision box and age panel.
+const ageLabel = (days) => (days < 365 ? 'new' : days < 5 * 365 ? 'fairly recent' : 'long-established')
+
+const ageText = (days) => {
+  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`
+  if (days < 365) return `about ${Math.round(days / 30.4)} months ago`
+  const years = Math.round(days / 365.25)
+  return `about ${years} year${years === 1 ? '' : 's'} ago`
+}
+
+// Stage 2 (backend stage2.py): the URL model's score combined with the
+// domain's age by a second, logistic-regression model.
+function Stage2Panel({ stage2, urlScore }) {
+  if (!stage2) return null
+  const levels = { phishing: 'Phishing', uncertain: 'Suspicious', legitimate: 'Legitimate' }
+  return (
+    <details className="panel result-section detail-panel stage2-panel">
+      <summary>Domain age details</summary>
+      <p>
+        This website (<span className="mono">{stage2.domain}</span>) was registered on{' '}
+        {stage2.registered}, {ageText(stage2.age_days)}.{' '}
+        {stage2.age_days < 365
+          ? 'New websites are more often phishing, because phishing domains are usually bought days or weeks before an attack.'
+          : stage2.age_days < 5 * 365
+          ? 'Phishing domains are usually only days or weeks old; this one is older, but not long-established.'
+          : 'Websites that have existed this long are rarely phishing domains.'}
+      </p>
+      <p className="section-intro">
+        Technical details: a second machine-learning model (logistic regression) combines the URL
+        pattern score with the domain's age.
+      </p>
+      <dl className="stage2-grid">
+        <dt>Domain</dt>
+        <dd className="mono">{stage2.domain}</dd>
+        <dt>Registered</dt>
+        <dd>{stage2.registered} ({ageText(stage2.age_days)})</dd>
+        <dt>URL pattern score (stage 1)</dt>
+        <dd>{pct(urlScore)}</dd>
+        <dt>Phishing probability (stage 2)</dt>
+        <dd><strong>{pct(stage2.p)}</strong> → {levels[stage2.level]}</dd>
+        <dt>Stage-2 thresholds</dt>
+        <dd>Suspicious from {pct(stage2.thresholds.uncertain)}, Phishing from {pct(stage2.thresholds.phishing)}</dd>
+      </dl>
+      {stage2.changed && (
+        <p className={`stage2-note ${stage2.changed}`}>
+          {stage2.changed === 'raised'
+            ? 'The domain\'s young age raised the result above what the URL pattern alone gave.'
+            : 'The domain\'s long history lowered the result below what the URL pattern alone gave.'}
+        </p>
+      )}
+    </details>
+  )
+}
+
+const PAGE_ICONS = { risk: '⚠', safe: '✓', info: 'ℹ' }
+
+// Findings of the live page check (backend page_check.py): the server opened
+// the page without running its scripts.
+function PageCheckPanel({ page }) {
+  if (!page) return null
+  const moved = page.final_url && page.final_url !== page.url
+  return (
+    <details className="panel result-section detail-panel page-check">
+      <summary>Live page check details</summary>
+      <p className="section-intro">
+        The server opened this page (without running its scripts or submitting anything) to
+        check what the URL alone cannot show.
+      </p>
+      {moved && (
+        <p className="page-final">
+          Page reached: <span className="mono">{page.final_url}</span>
+        </p>
+      )}
+      <ul className="page-signals">
+        {page.signals.map((signal) => (
+          <li key={signal.code} className={`page-signal ${signal.kind}`}>
+            <span className="page-signal-icon" aria-hidden>{PAGE_ICONS[signal.kind]}</span>
+            <span>{signal.text}</span>
+          </li>
+        ))}
+      </ul>
+      {page.seconds != null && <p className="page-time">Checked in {page.seconds} s.</p>}
+    </details>
+  )
+}
+
+const LEVEL_NAMES = { phishing: 'Phishing', uncertain: 'Suspicious', legitimate: 'Legitimate' }
+const LEVEL_TONE = { phishing: 'bad', uncertain: 'warn', legitimate: 'good' }
+
+// "How this result was decided": one plain line per check, in the order
+// the backend runs them (URL model, domain age, safety rules, page check).
+function DecisionSteps({ result, stage2, page, ruleNote }) {
+  const urlLevel = result.phishing_probability >= 0.89 ? 'phishing'
+    : result.phishing_probability >= 0.73 ? 'uncertain' : 'legitimate'
+  const steps = [{
+    text: `URL check (AI model): the address alone looks ${
+      { phishing: 'like phishing', uncertain: 'suspicious', legitimate: 'normal' }[urlLevel]}`,
+    tag: LEVEL_NAMES[urlLevel],
+    tone: LEVEL_TONE[urlLevel],
+  }]
+  if (stage2) {
+    steps.push({
+      text: `Domain age: registered ${stage2.registered}, ${ageText(stage2.age_days)}${
+        ''} (${ageLabel(stage2.age_days)})`,
+      tag: stage2.changed ? `${stage2.changed === 'raised' ? 'Raised' : 'Lowered'} to ${LEVEL_NAMES[stage2.level]}` : 'No change',
+      tone: stage2.changed ? LEVEL_TONE[stage2.level] : 'none',
+    })
+  }
+  const pageChanged = result.legit_reason === 'page_check' || result.escalated_by === 'page_check'
+  const stage2Decided = ['new_domain', 'established_domain'].includes(
+    result.uncertain_reason || result.legit_reason || result.escalated_by)
+  if (ruleNote && !pageChanged && !stage2Decided) {
+    steps.push({ text: `Safety rule: ${ruleNote}`, tag: LEVEL_NAMES[result.prediction], tone: LEVEL_TONE[result.prediction] })
+  }
+  if (page) {
+    const risk = page.signals.find((s) => s.kind === 'risk')
+    const safe = page.signals.find((s) => s.kind === 'safe')
+    const opened = page.reachable && (risk || safe)
+    steps.push({
+      text: opened ? `Page check: ${(risk || safe).text}` : 'Page check: the page could not be opened, so it was not checked',
+      tag: pageChanged ? `${result.prediction === 'phishing' ? 'Raised' : 'Lowered'} to ${LEVEL_NAMES[result.prediction]}` : 'No change',
+      tone: pageChanged ? LEVEL_TONE[result.prediction] : 'none',
+      muted: !opened,
+    })
+  }
+  return (
+    <section className="panel result-section decision-steps">
+      <h3>How this result was decided</h3>
+      <ol>
+        {steps.map((step, i) => (
+          <li key={i} className={step.muted ? 'muted' : ''}>
+            <span className="step-no">{i + 1}</span>
+            <span className="step-text">{step.text}</span>
+            <span className={`step-tag tone-${step.tone}`}>{step.tag}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
 export default function Scanner({ scanFn = scanURL }) {
   const [url, setUrl] = useState('')
   const [busy, setBusy] = useState(false)
@@ -222,11 +427,39 @@ export default function Scanner({ scanFn = scanURL }) {
   const isHttpReputable = Boolean(result) && !isTrusted && result.legit_reason === 'http_reputable'
   const isBrand = isUncertain && result.uncertain_reason === 'brand_impersonation'
   const isBrandEscalated = isPhish && result.escalated_by === 'brand_impersonation'
+  const isReputableSite = Boolean(result) && !isTrusted && result.legit_reason === 'reputable_site'
+  const isPageLegit = Boolean(result) && !isTrusted && result.legit_reason === 'page_check'
+  const isPageEscalated = isPhish && result.escalated_by === 'page_check'
+  const pageCheck = explain?.page_check || result?.page_check
+  const stage2 = result?.stage2 || explain?.stage2
+  const isNewDomain = Boolean(result) && !isTrusted
+    && (result.uncertain_reason === 'new_domain' || result.escalated_by === 'new_domain')
+  const isEstablished = Boolean(result) && !isTrusted
+    && (result.uncertain_reason === 'established_domain' || result.legit_reason === 'established_domain')
+  const isShortLink = isUncertain && result.uncertain_reason === 'short_link'
+  // What kept a warning on a well-established domain (login wording, another
+  // brand's name, a link to another website, a user@ prefix).
+  const lures = result?.lures || []
   // A rule after the model decided the verdict, so the raw model score is
   // a URL-pattern score, not the probability of the final verdict.
   const isOverridden = isReputable || isHttpsOnly || isHttpReputable || isBrand || isBrandEscalated
-  const overrideNote = isBrand || isBrandEscalated
+    || isReputableSite || isShortLink || isPageLegit || isPageEscalated || isNewDomain || isEstablished
+  const overrideNote = (isBrand || isBrandEscalated) && result?.lookalike
+    ? `Verdict raised: "${result.lookalike}" imitates "${result.brand}" on a domain that is not the brand's own`
+    : isBrand || isBrandEscalated
     ? `Verdict raised: "${result?.brand}" used on a domain that is not the brand's own`
+    : isNewDomain
+    ? `Final verdict from the stage-2 model: domain registered ${stage2 ? ageText(stage2.age_days) : 'recently'}`
+    : isEstablished
+    ? `Final verdict from the stage-2 model: domain registered in ${stage2 ? stage2.registered.slice(0, 4) : 'the past'}`
+    : isPageEscalated
+    ? 'Verdict raised by the live page check'
+    : isPageLegit
+    ? 'Final verdict from the live page check: a normal page of this website'
+    : isReputableSite
+    ? `Final verdict from domain reputation (Tranco #${result?.reputation?.rank?.toLocaleString()}) with no phishing lure in the address`
+    : isShortLink
+    ? 'Final verdict from the short-link check: the destination is hidden'
     : isReputable
     ? `Final verdict capped by domain reputation (Tranco #${result?.reputation?.rank?.toLocaleString()})`
     : isHttpReputable
@@ -301,6 +534,12 @@ export default function Scanner({ scanFn = scanURL }) {
                       : 'LEGITIMATE'}
               </div>
               <div className="result-url mono">{result.url}</div>
+              {result.checked_url && (
+                <div className="result-redirect">
+                  Redirect link – the result is for the address it opens:{' '}
+                  <span className="mono">{result.checked_url}</span>
+                </div>
+              )}
             </div>
 
             <span className={`risk-pill risk-${riskClass}`}>
@@ -345,7 +584,7 @@ export default function Scanner({ scanFn = scanURL }) {
               </div>
               <div className="metric-card">
                 <span className="metric-label">Confidence</span>
-                <strong>{confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by).label}</strong>
+                <strong>{confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by, result.lookalike).label}</strong>
                 {!isOverridden && <span className="metric-sub">{pct(result.confidence)}</span>}
               </div>
             </div>
@@ -353,7 +592,7 @@ export default function Scanner({ scanFn = scanURL }) {
 
           {!isTrusted && (
             <p className="confidence-note">
-              {confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by).text}
+              {confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by, result.lookalike).text}
             </p>
           )}
 
@@ -389,13 +628,42 @@ export default function Scanner({ scanFn = scanURL }) {
                 <span className="rec-icon" aria-hidden>ℹ</span>
                 <div>
                   <div className="rec-label">Low-confidence result</div>
-                  {isBrand ? (
+                  {isBrand && result.lookalike ? (
+                  <div>
+                    This address contains <strong>{result.lookalike}</strong>, a one-letter
+                    misspelling of <strong>{result.brand}</strong>, on a domain that is not an
+                    established {result.brand} website. This is <strong>not a confirmed
+                    phishing detection</strong> – open {result.brand} through its official
+                    website before entering passwords or payment details.
+                  </div>
+                  ) : isBrand ? (
                   <div>
                     This address uses the brand name <strong>{result.brand}</strong> on a
                     domain that is not an established {result.brand} website. It may be a
                     regional or partner site, or an impersonation. This is <strong>not a
                     confirmed phishing detection</strong> – open {result.brand} through its
                     official website before entering passwords or payment details.
+                  </div>
+                  ) : isNewDomain ? (
+                  <div>
+                    This website's domain <strong>{stage2?.domain}</strong> was registered{' '}
+                    {stage2 ? ageText(stage2.age_days) : 'recently'}. New domains are common for
+                    phishing websites. This is <strong>not a confirmed phishing detection</strong> –
+                    do not enter passwords or payment details unless you are sure who runs this website.
+                  </div>
+                  ) : isEstablished ? (
+                  <div>
+                    The address pattern resembles phishing, but the domain{' '}
+                    <strong>{stage2?.domain}</strong> has existed since {stage2?.registered?.slice(0, 4)}.
+                    This is <strong>not a confirmed phishing detection</strong> – check the address
+                    carefully before entering passwords or payment details.
+                  </div>
+                  ) : isShortLink ? (
+                  <div>
+                    This is a short link (<strong>{rep?.domain}</strong>), so the address does
+                    not show which website it opens. This is <strong>not a confirmed phishing
+                    detection</strong> – open it only if you trust who sent it, and check the
+                    address of the page it opens before entering passwords or payment details.
                   </div>
                   ) : isReputable ? (
                   <div>
@@ -404,6 +672,8 @@ export default function Scanner({ scanFn = scanURL }) {
                     #{rep?.rank?.toLocaleString()} globally). This is <strong>not a confirmed
                     phishing detection</strong> – make sure the domain is exactly {rep?.domain}{' '}
                     before entering passwords or payment details.
+                    {lures.length > 0 && ` The address also contains ${joinList(lures)}, which a phishing page on a shared or hacked website relies on.`}
+                    {rep?.shared && ' Anyone can share documents or pages on this service, so also check who shared the link.'}
                   </div>
                   ) : (
                   <div>
@@ -412,6 +682,7 @@ export default function Scanner({ scanFn = scanURL }) {
                     {isBorderline
                       ? 'Some URL characteristics resemble phishing, but not strongly enough to confirm it.'
                       : 'It was flagged mainly because the site does not use a secure HTTPS connection.'}
+                    {lures.length > 0 && ` The address also contains ${joinList(lures)}, which a phishing page on a shared or hacked website relies on.`}
                     {' '}This is <strong>not a confirmed phishing detection</strong> – check
                     the domain name carefully before entering passwords or payment details.
                   </div>
@@ -435,6 +706,10 @@ export default function Scanner({ scanFn = scanURL }) {
             </>
           )}
         </section>
+      )}
+
+      {result && !isTrusted && (
+        <DecisionSteps result={result} stage2={stage2} page={pageCheck} ruleNote={isOverridden ? overrideNote : null} />
       )}
 
       {isTrusted && (
@@ -602,8 +877,16 @@ export default function Scanner({ scanFn = scanURL }) {
             <h3>Why is this URL marked suspicious?</h3>
             <p className="section-intro">
               This URL was <strong>not classified as confirmed phishing</strong> —
-              {isBrand
+              {isBrand && result?.lookalike
+                ? ` it contains "${result.lookalike}", a one-letter misspelling of "${result.brand}", on a domain that is not the brand's own, so these signals are treated as caution flags rather than proof:`
+                : isBrand
                 ? ` it uses the brand name "${result?.brand}" on a domain that is not the brand's own, so these signals are treated as caution flags rather than proof:`
+                : isNewDomain
+                ? ' its URL pattern alone looks normal, but its domain is new, so these signals are treated as caution flags rather than proof:'
+                : isEstablished
+                ? ' its URL pattern resembles phishing, but its domain has existed for many years, so these signals are treated as caution flags rather than proof:'
+                : isShortLink
+                ? ' it is a short link, so the address does not show the website it opens; the signals below describe only the short link itself:'
                 : isReputable
                 ? ` its address pattern resembles phishing, but ${rep?.domain} is a well-established website, so these signals are treated as caution flags rather than proof:`
                 : isBorderline
@@ -685,24 +968,43 @@ export default function Scanner({ scanFn = scanURL }) {
             <h3>Security Analysis</h3>
             <div className="security-ok">
               <span className="check-icon">✓</span>
-              <strong>No suspicious phishing indicators were detected.</strong>
+              <strong>
+                {isEstablished
+                  ? 'This website\'s domain has existed for many years.'
+                  : isPageLegit
+                  ? 'The live page check found a normal page of this website.'
+                  : isReputableSite
+                  ? 'No phishing lure was found on this well-established website.'
+                  : isHttpReputable
+                  ? 'No phishing pattern was found apart from the missing HTTPS connection.'
+                  : 'No suspicious phishing indicators were detected.'}
+              </strong>
             </div>
-            <p>
-              The URL structure matches characteristics commonly associated with
-              legitimate websites.
-            </p>
+            {(isReputableSite || isHttpReputable || isPageLegit || isEstablished) && explain?.security_analysis ? (
+              explain.security_analysis.map((line, index) => <p key={index}>{line}</p>)
+            ) : (
+              <p>
+                The URL structure matches characteristics commonly associated with
+                legitimate websites.
+              </p>
+            )}
           </section>
 
           <section className="panel result-section">
             <h3>Why was this classified as legitimate?</h3>
             <p className="section-intro">
-              The AI model identified no significant phishing patterns from the URL.
-              The explanation below is in plain language — the AI Explanation
-              Evidence section further down shows the technical model signals
-              (SHAP/LIME) behind it:
+              {isEstablished
+                ? 'The URL-pattern model alone scored this address high. The stage-2 model, which also uses the domain\'s age, explains why it is still legitimate — the AI Explanation Evidence section further down shows the model signals (SHAP/LIME) that raised the URL score:'
+                : isPageLegit
+                ? 'On the URL alone this address looked suspicious. The points below, from the live page check, show why it is still legitimate — the AI Explanation Evidence section further down shows the model signals (SHAP/LIME) that raised the URL score:'
+                : isReputableSite
+                ? 'The URL-pattern model alone scored this address high. The checks below show why it is still legitimate — the AI Explanation Evidence section further down shows the model signals (SHAP/LIME) that raised the score:'
+                : isHttpReputable
+                ? 'The only warning signal for this URL is the missing HTTPS connection. The explanation below is in plain language — the AI Explanation Evidence section further down shows the technical model signals (SHAP/LIME) behind it:'
+                : 'The AI model identified no significant phishing patterns from the URL. The explanation below is in plain language — the AI Explanation Evidence section further down shows the technical model signals (SHAP/LIME) behind it:'}
             </p>
             <ul className="reason-list legitimate-reasons">
-              {reasons.slice(0, 3).map((reason, index) => {
+              {reasons.slice(0, 4).map((reason, index) => {
                 const parsed = splitReason(reason)
                 return (
                   <li key={index}>
@@ -723,7 +1025,15 @@ export default function Scanner({ scanFn = scanURL }) {
           <section className="panel result-section">
             <h3>AI Explanation Evidence</h3>
             <p className="section-intro">
-              Only evidence supporting the legitimate classification is shown.
+              {isEstablished
+                ? 'These signals raised the URL pattern score. The domain\'s long history outweighed them in the stage-2 model.'
+                : isPageLegit
+                ? 'These signals raised the URL pattern score. The live page check outweighed them.'
+                : isReputableSite
+                ? "These signals raised the URL pattern score. On this well-established domain they come from the site's own subdomain, path or document ID, so they did not decide the verdict."
+                : isHttpReputable
+                ? 'The missing-HTTPS signal is shown first, then the strongest signals supporting the legitimate classification.'
+                : 'Only evidence supporting the legitimate classification is shown.'}
             </p>
 
             {!explain ? (
@@ -733,9 +1043,11 @@ export default function Scanner({ scanFn = scanURL }) {
             ) : (
               <div className="evidence-list">
                 {evidence.map((item) => (
-                  <article className="evidence-card legitimate-evidence" key={item.feature}>
+                  <article className={`evidence-card ${item.shap_contribution > 0 ? 'phishing-evidence' : 'legitimate-evidence'}`} key={item.feature}>
                     <div className="evidence-title">
-                      <span className="check-icon" aria-hidden>✓</span>
+                      {item.shap_contribution > 0
+                        ? <span aria-hidden>⚠</span>
+                        : <span className="check-icon" aria-hidden>✓</span>}
                       {item.title}
                     </div>
                     {item.found && (
@@ -756,7 +1068,7 @@ export default function Scanner({ scanFn = scanURL }) {
                       <dt>Detected Value</dt>
                       <dd className="mono">{formatDetectedValue(item.feature, item.detected_value)}</dd>
                       <dt>Contribution</dt>
-                      <dd className="evidence-good">
+                      <dd className={item.shap_contribution > 0 ? 'evidence-danger' : 'evidence-good'}>
                         {item.support || 'Supports legitimate classification'}
                       </dd>
                     </dl>
@@ -767,6 +1079,9 @@ export default function Scanner({ scanFn = scanURL }) {
           </section>
         </>
       )}
+      {result && !isTrusted && <Stage2Panel stage2={stage2} urlScore={result.phishing_probability} />}
+
+      {result && !isTrusted && <PageCheckPanel page={pageCheck} />}
     </>
   )
 }

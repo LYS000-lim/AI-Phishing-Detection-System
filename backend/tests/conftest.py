@@ -5,6 +5,7 @@ Shared pytest setup for the PhishGuard API test suite.
   app.database is imported, so it is set before any app import). The real
   backend/phishguard.db is never touched.
 - Every test starts with empty tables.
+- The live page check (page_check.py) and stage 2 (stage2.py) are switched off.
 - Outgoing email is replaced by a stub that records the 6-digit reset code,
   so tests never send real mail (backend/.env holds live SMTP settings).
 - Each test describes itself through the `tc` fixture; at the end of the run
@@ -22,6 +23,11 @@ import pytest
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _TMP_DIR = tempfile.mkdtemp(prefix="phishguard_test_")
 os.environ["PHISHGUARD_DB_URL"] = "sqlite:///" + os.path.join(_TMP_DIR, "test.db").replace("\\", "/")
+# The live page check opens real web pages; tests that need it turn it on
+# with a stub (test_page_check.py), the rest never touch the network.
+os.environ["PHISHGUARD_PAGE_CHECK"] = "0"
+# Stage 2 looks up domain ages over the network; tests that need it stub it.
+os.environ["PHISHGUARD_STAGE2"] = "0"
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 from fastapi.testclient import TestClient  # noqa: E402

@@ -1,6 +1,7 @@
 from collections import Counter
 from datetime import date, datetime, time, timedelta, timezone
 from typing import List, Optional
+from urllib.parse import urlparse
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -8,14 +9,17 @@ from sqlalchemy import Integer, desc, func
 from sqlalchemy.orm import Session
 
 from .auth import current_user, hash_password, verify_password
-from .allowlist import is_trusted, matched_domain
+from .allowlist import is_trusted, unwrap_redirect
 from .database import get_db
 from .explanations import (
-    build_evidence, build_reason_bullets,
-    plain_text_explanation, risk_level,
+    _english_join, _feature_clause, _technique_summary_bullets, build_evidence,
+    build_reason_bullets, plain_text_explanation, risk_level,
 )
-from .features import FEATURE_ORDER, extract_features, feature_vector
-from .ml_state import classify_vec, get_lime_explainer, get_shap_explainer, model_info, MODEL, what_if_changes
+from .features import FEATURE_ORDER, extract_features
+from .ml_state import (
+    UNCERTAIN_THRESHOLD, get_lime_explainer, get_shap_explainer, homepage_score, model_info, MODEL,
+    what_if_changes,
+)
 from .models import Detection, ReportedURL, User, UserBlockedURL
 from .schemas import (
     BatchRequest, DetectionOut, PasswordChange, ProfileUpdate,
@@ -24,8 +28,17 @@ from .schemas import (
 )
 
 from .phishing_type import detect_phishing_type
+from .pipeline import evaluate
+from .stage2 import describe_age
 
 router = APIRouter(tags=["user"])
+
+# Why a URL was Suspicious before the live page check (explain()).
+_URL_REASON = {
+    "reputable_domain": "its address pattern resembles phishing",
+    "borderline": "its phishing score was in the borderline range",
+    "https_only": "it does not use a secure HTTPS connection",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -38,12 +51,28 @@ def _predict_and_log(
     ip: Optional[str] = None,
     source: str = "website",
 ) -> dict:
+    if MODEL is None and not is_trusted(unwrap_redirect(url)):
+        raise HTTPException(
+            503,
+            "Trained model is not available yet. Run "
+            "`python notebooks/train_and_compare.py` against the "
+            "PhiUSIIL CSV to generate outputs/deployment_model.joblib, "
+            "then restart the API. (Trusted domains still work via the "
+            "reputation allowlist.)",
+        )
+
+    # pipeline.evaluate: redirect unwrapping, allowlist, model + rules and
+    # the live page check. A redirect or short link is checked by the
+    # address it opens; the log keeps the URL the user entered.
+    result = evaluate(url)
+    checked, checked_url = result["checked"], result["checked_url"]
+
     # Reputation-list bypass: well-known trusted domains skip ML
     # classification entirely. This is a separate result state from an ML
     # legitimate prediction and therefore returns trusted_domain=True.
-    if is_trusted(url):
-        domain = matched_domain(url)
-        features = extract_features(url)
+    if result["trusted"]:
+        domain = result["trusted"]
+        features = extract_features(checked)
         record = Detection(
             user_id=user.id,
             url=url,
@@ -62,6 +91,7 @@ def _predict_and_log(
         return {
             "id": record.id,
             "url": url,
+            "checked_url": checked_url,
             "prediction": "legitimate",
             "label": 0,
             "confidence": 1.0,
@@ -77,24 +107,11 @@ def _predict_and_log(
             "created_at": record.created_at.isoformat(),
         }
 
-    if MODEL is None:
-        raise HTTPException(
-            503,
-            "Trained model is not available yet. Run "
-            "`python notebooks/train_and_compare.py` against the "
-            "PhiUSIIL CSV to generate outputs/deployment_model.joblib, "
-            "then restart the API. (Trusted domains still work via the "
-            "reputation allowlist.)",
-        )
-
-    vec = feature_vector(url)
-    features = extract_features(url)
-
     # Tuned thresholds + the missing-HTTPS softening live in one place
     # (explanations.classify). `label`/`phishing_probability` still store
     # the model's raw decision, so dashboard/aggregate stats keep reporting
     # true model behaviour -- only prediction/risk_level are softened.
-    verdict = classify_vec(vec, features, url)
+    features, verdict = result["features"], result["verdict"]
     label = verdict["label"]                           # 0=Legit, 1=Phish
     p_phish = verdict["p_phish"]
     confidence = verdict["confidence"]
@@ -103,7 +120,7 @@ def _predict_and_log(
 
     attack_type = None
     if prediction == "phishing":
-        attack_type = detect_phishing_type(url, features)
+        attack_type = detect_phishing_type(checked, features)
 
     record = Detection(
         user_id=user.id,
@@ -125,6 +142,7 @@ def _predict_and_log(
     return {
         "id": record.id,
         "url": url,
+        "checked_url": checked_url,
         "prediction": prediction,
         "label": label,
         "confidence": round(confidence, 4),
@@ -137,6 +155,10 @@ def _predict_and_log(
         "legit_reason": verdict["legit_reason"],
         "escalated_by": verdict["escalated_by"],
         "brand": verdict["brand"],
+        "lookalike": verdict["lookalike"],
+        "lures": verdict["lures"],
+        "page_check": verdict["page_check"],
+        "stage2": verdict["stage2"],
         "reputation": verdict["reputation"],
         "features": features,
         "attack_type": attack_type,
@@ -181,12 +203,30 @@ def scan_batch(
 # ---------------------------------------------------------------------------
 @router.post("/api/explain")
 def explain(req: URLRequest, user: User = Depends(current_user)):
+    if MODEL is None and not is_trusted(unwrap_redirect(req.url)):
+        raise HTTPException(503, "Trained model is not available.")
+
+    # Same check as the scan (cached page check, so both agree). A redirect
+    # or short link is explained by the address it opens. For a Phishing
+    # result the page check only adds findings.
+    try:
+        result = evaluate(req.url, page_for=("uncertain", "phishing"))
+    except Exception as exc:
+        raise HTTPException(422, f"Could not process URL: {exc}")
+    url, checked_url = result["checked"], result["checked_url"]
+    redirect_note = (
+        [f"This link is a redirect: it opens {urlparse(url).hostname}, so the result is "
+         "for that website."]
+        if checked_url else []
+    )
+
     # Trusted-domain results are decided by reputation verification, not by
     # the ML model. Return a dedicated explanation state with no SHAP/LIME.
-    if is_trusted(req.url):
-        domain = matched_domain(req.url)
+    if result["trusted"]:
+        domain = result["trusted"]
         return {
             "url": req.url,
+            "checked_url": checked_url,
             "prediction": "legitimate",
             "risk_level": "Low",
             "confidence": 1.0,
@@ -200,7 +240,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
                 "This website has been verified as an official trusted domain.",
                 "The URL structure does not contain suspicious characteristics commonly observed in phishing websites.",
             ],
-            "why_detected": [
+            "why_detected": redirect_note + [
                 f"The official domain '{domain}' matched the trusted-domain allowlist.",
                 "Trusted-domain verification completed successfully, so an ML explanation was not required.",
             ],
@@ -220,16 +260,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             },
         }
 
-    if MODEL is None:
-        raise HTTPException(503, "Trained model is not available.")
-
-    try:
-        vec = feature_vector(req.url)
-        features = extract_features(req.url)
-    except Exception as exc:
-        raise HTTPException(422, f"Could not process URL: {exc}")
-
-    verdict = classify_vec(vec, features, req.url)
+    vec, features, verdict = result["vec"], result["features"], result["verdict"]
     label = verdict["label"]
     p_phish = verdict["p_phish"]
     prediction = verdict["prediction"]
@@ -238,6 +269,19 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
     uncertain_https = verdict["uncertain_reason"] == "https_only"
     uncertain_borderline = verdict["uncertain_reason"] == "borderline"
     uncertain_brand = verdict["uncertain_reason"] == "brand_impersonation"
+    lures = verdict["lures"]
+    # What kept a warning on a well-established domain (ml_state.lure_signals).
+    lure_sentence = lure_reason = ""
+    if lures:
+        lure_sentence = (
+            f"The address also contains {_english_join(lures)}, which a phishing page "
+            "on a shared or hacked website relies on, so the warning stays."
+        )
+        lure_reason = (
+            f"{verdict['reputation']['domain']} is a well-established website, but the "
+            f"address contains {_english_join(lures)}, which a phishing page on a "
+            "shared or hacked website relies on."
+        )
 
     # SHAP contributions for class 1 (phishing).
     shap_exp = get_shap_explainer()
@@ -277,12 +321,121 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
     ]
 
     attack_analysis = (
-        detect_phishing_type(req.url, features)
+        detect_phishing_type(url, features)
         if prediction == "phishing"
         else None
     )
 
-    if uncertain_reputable:
+    page = verdict["page_check"]
+    if verdict["legit_reason"] == "page_check":
+        # Suspicious on the URL alone; the live page check found a normal
+        # page of this well-established website (pipeline.apply_page_check).
+        rep = verdict["reputation"]
+        safe = [s["text"] for s in page["signals"] if s["kind"] == "safe"]
+        url_part = _URL_REASON.get(verdict.get("url_reason"), "its address pattern resembles phishing")
+        if lures:
+            url_part += f" and it contains {_english_join(lures)}"
+        why_detected = [f"On the URL alone this address was Suspicious: {url_part}."] + [
+            f"Live page check: {text}" for text in safe
+        ] + [
+            f"{rep['domain']} is a well-established website (Tranco rank #{rep['rank']:,}), so a "
+            "page that names only this website and sends no password to an unknown server is "
+            "treated as legitimate.",
+        ]
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
+        for card in evidence:
+            card["support"] = "Raised the URL pattern score (outweighed by the live page check)"
+        plain = (
+            f"Legitimate. On the URL alone this address looked suspicious ({url_part}), but "
+            f"the live page check found a normal page of {rep['domain']} that names only this "
+            "website and sends no password to an unknown server."
+        )
+        why_detected += build_reason_bullets("legitimate", features, shap_out, limit=1)
+        security_analysis = safe + [
+            "The page was opened by the server without running its scripts. A phishing page "
+            "can show automated visitors different content, so stay alert if a page asks for "
+            "details it should not need.",
+        ]
+    elif verdict["escalated_by"] == "page_check":
+        # The live page check found a phishing behaviour on the page.
+        risks = [s["text"] for s in page["signals"] if s["kind"] == "risk"]
+        if verdict.get("url_reason") == "brand_impersonation":
+            url_part = (f"it uses the brand name \"{verdict['brand']}\" on a domain the brand "
+                        f"does not own; URL pattern score {p_phish:.0%}")
+        else:
+            url_part = (f"{_URL_REASON.get(verdict.get('url_reason'), 'borderline URL signals')}; "
+                        f"URL pattern score {p_phish:.0%}")
+        why_detected = [f"Live page check: {text}" for text in risks] + [
+            f"On the URL alone this address was only Suspicious ({url_part}); what the page "
+            "itself does is what raised the verdict to phishing.",
+        ]
+        evidence = build_evidence(prediction, features, shap_out, lime_out, limit=3)
+        plain = (
+            f"Phishing. The live page check found: {risks[0]} Do not enter passwords or "
+            "payment details."
+        )
+        security_analysis = None
+    elif "new_domain" in (verdict["uncertain_reason"], verdict["escalated_by"]):
+        # Stage 2 (stage2.py): a recently registered domain raised the
+        # verdict above what the URL pattern alone gave.
+        s2 = verdict["stage2"]
+        level = "phishing" if prediction == "phishing" else "warning"
+        cut = s2["thresholds"]["phishing" if prediction == "phishing" else "uncertain"]
+        why_detected = [
+            f"The domain {s2['domain']} was registered {describe_age(s2['age_days'])} "
+            f"({s2['registered']}). Most phishing domains are bought days or weeks before an "
+            "attack and abandoned soon after, while genuine websites keep theirs for years.",
+            f"The stage-2 model combines the URL pattern score ({p_phish:.0%}) with the domain's "
+            f"age into a {s2['p']:.0%} phishing probability, above its {level} level ({cut:.0%}).",
+        ] + build_reason_bullets("phishing", features, shap_out,
+                                 attack_analysis=attack_analysis, limit=2)
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
+        plain = (
+            f"{'Phishing' if prediction == 'phishing' else 'Suspicious'}. This website's domain "
+            f"was registered {describe_age(s2['age_days'])}. New domains are a strong sign of "
+            f"phishing, and together with the URL pattern score ({p_phish:.0%}) the stage-2 model "
+            f"gives a {s2['p']:.0%} phishing probability. Do not enter passwords or payment "
+            "details unless you are sure who runs this website."
+        )
+        security_analysis = None if prediction == "phishing" else [
+            f"The domain {s2['domain']} was registered {describe_age(s2['age_days'])} "
+            f"({s2['registered']}), recently compared with most genuine websites.",
+            "The URL pattern alone was not enough for a warning; the domain's age is what "
+            "raised this result.",
+        ]
+    elif "established_domain" in (verdict["uncertain_reason"], verdict["legit_reason"]):
+        # Stage 2: a long-held domain lowered the verdict below what the URL
+        # pattern alone gave.
+        s2 = verdict["stage2"]
+        level = "warning" if prediction == "legitimate" else "phishing"
+        cut = s2["thresholds"]["uncertain" if prediction == "legitimate" else "phishing"]
+        why_detected = [
+            f"The domain {s2['domain']} was registered {describe_age(s2['age_days'])} "
+            f"({s2['registered']}). Phishing domains are rarely kept this long; most are bought "
+            "days or weeks before an attack.",
+            f"The stage-2 model combines the URL pattern score ({p_phish:.0%}) with the domain's "
+            f"age into a {s2['p']:.0%} phishing probability, below its {level} level ({cut:.0%}).",
+        ]
+        if prediction == "legitimate":
+            why_detected += build_reason_bullets("legitimate", features, shap_out, limit=1)
+        if lures:
+            why_detected.append(f"The address contains {_english_join(lures)}; a long-established "
+                                "website can still be hacked, so check the address before signing in.")
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
+        for card in evidence:
+            card["support"] = "Raised the URL pattern score (outweighed by the domain's age)"
+        plain = (
+            f"{'Legitimate' if prediction == 'legitimate' else 'Suspicious'}. The address pattern "
+            f"resembles phishing ({p_phish:.0%}), but its domain {s2['domain']} has existed since "
+            f"{s2['registered'][:4]}; the stage-2 model gives a {s2['p']:.0%} phishing probability."
+        )
+        security_analysis = [
+            f"The domain {s2['domain']} was registered in {s2['registered'][:4]}, long before "
+            "typical phishing domains.",
+            "A long-established website can still be hacked, so stay alert if the page asks for "
+            "details it should not need.",
+        ]
+    elif uncertain_reputable:
         # The model scored the URL text as phishing, but the registered
         # domain is a well-established website, so the verdict is capped.
         rep = verdict["reputation"]
@@ -303,6 +456,45 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             "Login, account and payment pages of real services often have "
             "address patterns similar to phishing pages, so a URL-pattern "
             "score alone is not treated as proof for an established domain.",
+        ]
+        if lures:
+            why_detected = [lure_reason] + why_detected[:2]
+            plain += " " + lure_sentence
+            security_analysis.append(lure_sentence)
+        if rep.get("shared"):
+            # SharePoint, Google Docs / Drive, ... (reputation.py
+            # DOCUMENT_SERVICES): genuine service, content by anyone.
+            plain += (
+                " Anyone can share documents or pages on this service, so also "
+                "check who shared the link."
+            )
+            security_analysis.append(
+                "Anyone can publish documents or pages on this service, so the "
+                "service being genuine does not prove the content is."
+            )
+    elif uncertain_brand and verdict["lookalike"]:
+        # A misspelling of a brand name (brands.lookalike_brand) on a domain
+        # that is not well established.
+        brand_name, imitation = verdict["brand"], verdict["lookalike"]
+        why_detected = [
+            f"The address contains \"{imitation}\", which differs from the brand name "
+            f"\"{brand_name}\" by one letter, on a domain that is not one of "
+            f"{brand_name}'s well-established websites.",
+            "Misspelled brand names (typosquatting) are a common way to make a fake "
+            "website look genuine, so this is treated as a caution flag.",
+        ]
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
+        plain = (
+            f"Suspicious. This address contains \"{imitation}\", a near-spelling of "
+            f"\"{brand_name}\", on a domain that is not an established {brand_name} "
+            f"website. Open {brand_name} through its official website before entering "
+            "passwords or payment details."
+        )
+        security_analysis = [
+            f"\"{imitation}\" is one letter away from \"{brand_name}\", a pattern used by "
+            "typosquatting websites.",
+            "The URL pattern alone was not enough for a warning; the misspelled brand "
+            "name is what raised this result to suspicious.",
         ]
     elif uncertain_brand:
         # The model scored the URL as legitimate-looking, but the hostname
@@ -330,6 +522,28 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             "The URL pattern alone was not enough for a warning; the brand name on "
             "an unknown domain is what raised this result to suspicious.",
         ]
+    elif verdict["escalated_by"] == "brand_impersonation" and verdict["lookalike"]:
+        # A look-alike spelling of a brand raised the verdict to phishing
+        # (brands.lookalike_brand). The attack analysis names the
+        # typosquatting technique; lead with the imitation itself.
+        brand_name, imitation = verdict["brand"], verdict["lookalike"]
+        # No "the model's decision was reinforced by..." sentence: the
+        # model's own score was below the Phishing threshold here.
+        why_detected = [
+            f"The address imitates the brand name \"{brand_name}\" with the look-alike "
+            f"spelling \"{imitation}\", on a domain that is not one of {brand_name}'s "
+            "websites.",
+        ] + _technique_summary_bullets(attack_analysis, limit=2) + [
+            f"The URL pattern score alone is {p_phish:.0%}; the look-alike brand name "
+            "is what raised the verdict to phishing.",
+        ]
+        evidence = build_evidence(prediction, features, shap_out, lime_out, limit=3)
+        plain = (
+            f"Phishing. This address imitates \"{brand_name}\" with the look-alike "
+            f"spelling \"{imitation}\", a typosquatting trick used to make a fake "
+            "website look genuine. Do not enter passwords or payment details."
+        )
+        security_analysis = None
     elif uncertain_borderline:
         # Score between the tuned "uncertain" and "phishing" thresholds:
         # some phishing-like signals, but not enough for a hard verdict.
@@ -351,6 +565,10 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             "Low-confidence results are shown as suspicious instead of "
             "phishing to avoid falsely accusing legitimate websites.",
         ]
+        if lures:
+            why_detected = [lure_reason] + why_detected[:2]
+            plain += " " + lure_sentence
+            security_analysis.append(lure_sentence)
     elif uncertain_https:
         # build_reason_bullets/build_evidence/plain_text_explanation only
         # know "phishing" vs. "legitimate" wording -- "uncertain" gets its
@@ -380,6 +598,79 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             "This is shown as suspicious rather than a confirmed phishing "
             "result, since many legitimate sites still don't use HTTPS.",
         ]
+    elif verdict["uncertain_reason"] == "short_link":
+        # A link shortener hides the destination (ml_state short-link rule).
+        host = urlparse(url).hostname
+        why_detected = [
+            f"{host} is a link-shortening service: the address only forwards to "
+            "another website, and that website is not visible in the link.",
+            "The URL pattern score describes the short link itself, not the website "
+            "it opens, so it cannot show whether that website is safe.",
+            "Phishing messages often use short links to hide a fake login page, so "
+            "a short link is treated as a caution flag.",
+        ]
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
+        plain = (
+            f"Suspicious. This is a short link ({host}), so the address does not show "
+            "which website it opens. Open it only if you trust who sent it, and check "
+            "the address of the page it opens before entering passwords or payment "
+            "details."
+        )
+        security_analysis = [
+            "Short links hide their destination, so the website they open cannot be "
+            "judged from the link text.",
+            "Check the address bar of the page the link opens before entering any "
+            "details.",
+        ]
+    elif verdict["legit_reason"] == "reputable_site":
+        # Long or deep address on a well-established domain whose homepage
+        # scores as legitimate, with no lure in the address (ml_state
+        # reputable-site rule).
+        rep = verdict["reputation"]
+        raised = [
+            _feature_clause(d["feature"], "phishing", features.get(d["feature"]))
+            for d in shap_out if d["shap_value"] > 0
+        ][:3]
+        why_detected = [
+            f"The registered domain {rep['domain']} is a well-established website "
+            f"(Tranco rank #{rep['rank']:,}), and the model does not flag its homepage "
+            f"({homepage_score(rep['domain']):.0%} phishing score, below the "
+            f"{UNCERTAIN_THRESHOLD:.0%} warning level).",
+            f"The URL pattern score ({p_phish:.1%}) comes from "
+            f"{_english_join(raised) if raised else 'the length and structure of the address'}"
+            ". Here these come from the site's own subdomain, folder path or document ID: "
+            "real document, search and article links on large websites look like "
+            "this, so they are not treated as phishing evidence on an established "
+            "domain.",
+            "The address has none of the lures a phishing page on a shared or hacked "
+            "website relies on: no login or payment wording, no other company's brand "
+            "name, no link to another website and no user@ prefix.",
+        ] + build_reason_bullets("legitimate", features, shap_out, limit=1)
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
+        for card in evidence:
+            card["support"] = "Raised the URL pattern score (outweighed by the domain check)"
+        plain = (
+            f"Legitimate. This address belongs to {rep['domain']}, a well-established "
+            "website. Its length and structure resemble phishing to the URL-pattern "
+            f"model ({p_phish:.1%}), but those parts are chosen by the site itself and "
+            "the address carries no phishing lure."
+        )
+        security_analysis = [
+            f"{rep['domain']} is a well-established website (Tranco rank "
+            f"#{rep['rank']:,}), and the model does not flag its homepage.",
+            "No phishing lure was found in the subdomain, path or query: no login or "
+            "payment wording, no other company's brand name, no link to another "
+            "website and no user@ prefix.",
+        ]
+        if rep.get("shared"):
+            plain += (
+                " Anyone can share files on this service, so check who sent the link "
+                "before signing in or downloading anything."
+            )
+            security_analysis.append(
+                "Anyone can share files on this service, so the service being genuine "
+                "does not prove the shared content is - check who sent the link."
+            )
     elif verdict["legit_reason"] == "http_reputable":
         # Plain-http page on a well-established domain whose only warning
         # signal was the missing HTTPS (ml_state.classify_vec HTTP rule).
@@ -431,8 +722,13 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
                 "The URL structure matches characteristics commonly associated with legitimate websites.",
             ]
 
+    if checked_url:
+        why_detected = redirect_note + why_detected
+        plain = redirect_note[0] + " " + plain
+
     return {
         "url": req.url,
+        "checked_url": checked_url,
         "prediction": prediction,
         "risk_level": risk,
         "confidence": round(verdict["confidence"], 4),
@@ -440,6 +736,10 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         "legit_reason": verdict["legit_reason"],
         "escalated_by": verdict["escalated_by"],
         "brand": verdict["brand"],
+        "lookalike": verdict["lookalike"],
+        "lures": lures,
+        "page_check": page,
+        "stage2": verdict["stage2"],
         "reputation": verdict["reputation"],
         "phishing_probability": round(p_phish, 4),
         "legitimate_probability": round(1 - p_phish, 4),

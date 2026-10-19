@@ -41,14 +41,16 @@ const RED_FLAGS = [
 ]
 
 const PIPELINE = [
-  ['1. URL clean-up', 'Tracking parameters (utm_*, fbclid, gclid…) and fragments are removed so the same page is always judged the same way.'],
-  ['2. Trusted-domain allowlist', 'Well-known official domains are marked Legitimate straight away. User-content hosts (e.g. sites.google.com) are not trusted, since anyone can publish there.'],
+  ['1. URL clean-up', 'Tracking parameters (utm_*, fbclid, gclid…) and fragments are removed so the same page is always judged the same way. An address typed without http:// or https:// is checked as https://, as the browser would open it.'],
+  ['2. Trusted-domain allowlist', 'Well-known official domains are shown as Trusted Website straight away. User-content hosts (e.g. sites.google.com) are not trusted, since anyone can publish there. A redirect link on a trusted service (a Google search result, Outlook Safe Links) is checked by the address it opens.'],
   ['3. Blacklist check (extension)', 'Domains confirmed by the administrator, and websites you blocked yourself, are blocked before the page loads.'],
   ['4. Feature extraction', '22 numeric features are calculated from the URL text only - length, domain, characters, obfuscation, HTTPS and suspicious words. The page itself is never downloaded.'],
   ['5. Random Forest model', 'A Random Forest (many decision trees voting together), trained on the PhiUSIIL dataset plus dated phishing-feed URLs, outputs a phishing probability between 0 and 1.'],
   ['6. Decision thresholds', 'Probability ≥ 0.89 → Phishing (High risk). 0.73 – 0.89 → Suspicious (Medium risk). Below 0.73 → Legitimate (Low risk).'],
-  ['7. Safety rules after the model', 'Domain reputation: domains in the Tranco top 250,000 cannot be called Phishing (at most Suspicious). HTTP rule: a reputable site warned only for missing HTTPS is cleared. Brand rule: a well-known brand name on a domain the brand does not own raises the verdict one step.'],
-  ['8. Explanation & attack type', 'The strongest signals are turned into plain-language reasons, and the attack is classified (Credential Theft, Financial Scam, etc.) with advice on what to do.'],
+  ['7. Stage 2: domain age', 'A second machine-learning model (logistic regression) combines the Random Forest score with how long the website\'s domain has existed (looked up in the public domain registry). Phishing domains are usually days or weeks old, so a new domain raises the phishing probability and a domain held for years lowers it. It is skipped for shared hosting platforms and short links, or when the age cannot be found within 3 seconds.'],
+  ['8. Safety rules after the model', 'Domain reputation: domains in the Tranco top 250,000 cannot be called Phishing (at most Suspicious). HTTP rule: a reputable site warned only for missing HTTPS is cleared. Reputable-site rule: a long or deep https:// link (document, search or article) on a reputable domain is cleared when the model does not flag the homepage and the address has no lure - login or payment wording, another company\'s brand name, a link to another website or a user@ prefix. Short-link rule: bit.ly, forms.gle and similar links hide their destination, so they are always Suspicious. Brand rule: a well-known brand name, or a one-letter misspelling of it, on a domain the brand does not own raises the verdict one step; a brand spelled with look-alike characters (g00gle, paypa1) is shown as Phishing.'],
+  ['9. Live page check', 'For a Suspicious result the server opens the page itself (without running its scripts). A short link is followed and the page it opens is checked instead. A password form that sends to another website, a password asked for in another company\'s name, or a form service collecting passwords makes the result Phishing; a normal page of a well-established website that names only itself makes it Legitimate.'],
+  ['10. Explanation & attack type', 'The strongest signals are turned into plain-language reasons, and the attack is classified (Credential Theft, Financial Scam, etc.) with advice on what to do.'],
 ]
 
 const FEATURE_GROUPS = [
@@ -115,7 +117,7 @@ const GLOSSARY = [
       ['Phishing', 'Strong phishing signs. The extension shows a warning page before the site loads.'],
       ['Phishing probability', 'The model\'s estimated chance (0-100%) that the URL is phishing.'],
       ['Confidence', 'How sure the model is about the verdict it gave (the probability of the predicted class).'],
-      ['URL Pattern Score', 'The raw model score, shown when a safety rule (reputation, HTTP or brand rule) changed the final verdict.'],
+      ['URL Pattern Score', 'The raw model score, shown when a safety rule (reputation, HTTP, reputable-site, short-link or brand rule) changed the final verdict.'],
       ['Risk level', 'Low / Medium / High - a simple summary of the verdict for users.'],
       ['Threshold', 'The cut-off probability that separates verdicts (0.73 for Suspicious, 0.89 for Phishing).'],
       ['False positive / false negative', 'A safe site wrongly flagged / a phishing site wrongly allowed.'],
@@ -162,7 +164,9 @@ const GLOSSARY = [
   },
 ]
 
-// Each question: q, options, answer (index), why.
+// Each question: q, options, answer (index), why. Question order and option
+// order are shuffled on every attempt; `fixed` (or `fixedOptions` on a quiz)
+// keeps options whose order carries meaning (Legitimate < Suspicious < Phishing).
 const QUIZZES = [
   {
     id: 'basics',
@@ -174,11 +178,16 @@ const QUIZZES = [
       { q: 'Your "bank" emails: "Account locked! Verify within 1 hour". What is the biggest red flag?', options: ['It mentions your bank', 'The urgent threat pushing you to act fast', 'It was sent in the morning', 'It has a logo'], answer: 1, why: 'Urgency stops you from thinking carefully - a classic social-engineering trick.' },
       { q: 'A real bank will ask for your TAC/OTP by phone or email…', options: ['Sometimes', 'Only for large transfers', 'Never', 'Only on weekends'], answer: 2, why: 'Legitimate organisations never ask you to share a one-time password.' },
       { q: 'Why can\'t blacklists alone stop phishing?', options: ['They are too large', 'New phishing sites appear and disappear within hours, before they are listed', 'Browsers ignore them', 'They only work on mobile'], answer: 1, why: 'This is why PhishGuard uses a machine learning model that can judge URLs it has never seen.' },
+      { q: 'A caller pretending to be a bank officer asks for your TAC. This is called…', options: ['Smishing', 'Vishing', 'Typosquatting', 'Spear phishing'], answer: 1, why: 'Voice + phishing = vishing. The caller wants the code to approve a transaction.' },
+      { q: 'A copy of a real website hosted on a similar-looking domain such as paypa1.com is a…', options: ['Clone / look-alike site', 'Browser extension', 'Pop-up advert', 'Software update'], answer: 0, why: 'Clone sites copy the real layout and logo so only the address gives them away.' },
+      { q: 'What do phishers most often want from you?', options: ['Your screen resolution', 'Login credentials, banking details or personal data', 'Your favourite colour', 'Your browser history'], answer: 1, why: 'Stolen credentials and payment details can be used or sold straight away.' },
+      { q: 'A QR code on a poster opens a "login to claim reward" page. Why is this risky?', options: ['QR codes are always safe', 'You cannot see the real address before it opens, so it may be a phishing page', 'QR codes slow down your phone', 'It only works on Wi-Fi'], answer: 1, why: 'QR codes hide the link the same way short links do. Check the address before typing anything.' },
     ],
   },
   {
     id: 'spot',
     name: 'Spot the Phishing URL',
+    fixedOptions: true,
     questions: [
       { q: 'https://www.paypal.com/myaccount/summary', options: ['Legitimate', 'Phishing'], answer: 0, why: 'The registered domain is paypal.com - PayPal\'s own.' },
       { q: 'https://paypal.com.account-verify.info/login', options: ['Legitimate', 'Phishing'], answer: 1, why: 'The registered domain is account-verify.info. "paypal.com" is only a subdomain.' },
@@ -188,6 +197,8 @@ const QUIZZES = [
       { q: 'https://accounts.google.com/signin', options: ['Legitimate', 'Phishing'], answer: 0, why: 'accounts is a subdomain of google.com, Google\'s own domain.' },
       { q: 'https://faceb00k-login.com/', options: ['Legitimate', 'Phishing'], answer: 1, why: 'Typosquatting: zeros instead of the letter "o".' },
       { q: 'https://sites.google.com/view/shopee-reward-claim', options: ['Legitimate', 'Phishing'], answer: 1, why: 'Anyone can publish on sites.google.com, so "google" in the domain proves nothing. A free reward claim page is a giveaway scam.' },
+      { q: 'https://shopee.com.my/user/purchase', options: ['Legitimate', 'Phishing'], answer: 0, why: 'shopee.com.my is Shopee Malaysia\'s own domain; /user/purchase is just a page on it.' },
+      { q: 'http://www.paypa1.com/signin', options: ['Legitimate', 'Phishing'], answer: 1, why: 'Look-alike character: the digit "1" replaces the letter "l" in PayPal, and it is plain HTTP.' },
     ],
   },
   {
@@ -201,13 +212,21 @@ const QUIZZES = [
       { q: 'Why is IsHTTPS = 1 NOT proof that a site is safe?', options: ['HTTPS is outdated', 'Phishing sites can get free certificates too', 'HTTPS only works on Chrome', 'It is - HTTPS sites are always safe'], answer: 1, why: 'HTTPS encrypts the connection but does not verify who owns the site.' },
       { q: 'Which feature did PhishGuard add on top of the dataset\'s structural features?', options: ['URLLength', 'IsHTTPS', 'HasBrandOutsideDomain', 'DomainLength'], answer: 2, why: 'HasBrandOutsideDomain and NoOfSuspiciousWords let the model "read" words in the URL.' },
       { q: 'A very high DegitRatioInURL usually means…', options: ['A readable, word-based URL', 'Many digits, e.g. random IDs or look-alike characters', 'The site uses HTTPS', 'The domain is short'], answer: 1, why: 'Legitimate URLs are mostly letters; phishing kits often generate digit-heavy strings.' },
+      { q: 'NoOfSuspiciousWords counts words such as…', options: ['login, verify, account, billing', 'home, about, contact', 'www, com, net', 'jpg, png, gif'], answer: 0, why: 'Credential and payment words are common in phishing URLs that imitate login or billing pages.' },
+      { q: 'Which feature counts the "?" symbols in a URL?', options: ['NoOfEqualsInURL', 'NoOfQMarkInURL', 'NoOfAmpersandInURL', 'TLDLength'], answer: 1, why: 'NoOfQMarkInURL is one of the query-string symbol counts (= ? &).' },
+      { q: 'For http://example.com/login, what is the value of IsHTTPS?', options: ['0', '1', '22', 'It is not calculated'], answer: 0, why: 'The URL starts with http://, not https://, so IsHTTPS = 0.' },
     ],
   },
   {
     id: 'results',
     name: 'Reading PhishGuard Results',
     questions: [
-      { q: 'The model gives a phishing probability of 0.80. What is the verdict?', options: ['Legitimate', 'Suspicious', 'Phishing'], answer: 1, why: '0.73 – 0.89 is Suspicious (Medium risk); ≥ 0.89 is Phishing.' },
+      { q: 'The model gives a phishing probability of 0.80. What is the verdict?', options: ['Legitimate', 'Suspicious', 'Phishing'], answer: 1, fixed: true, why: '0.73 – 0.89 is Suspicious (Medium risk); ≥ 0.89 is Phishing.' },
+      { q: 'The model gives a phishing probability of 0.95. What is the verdict?', options: ['Legitimate', 'Suspicious', 'Phishing'], answer: 2, fixed: true, why: '0.89 or above is Phishing (High risk).' },
+      { q: 'A domain in the Tranco top 250,000 can be shown as at most…', options: ['Legitimate', 'Suspicious', 'Phishing'], answer: 1, fixed: true, why: 'The domain reputation rule stops popular, long-established sites from being called Phishing.' },
+      { q: 'You analyse a bit.ly short link. What does the short-link rule do?', options: ['Always trusts it', 'Shows it as Suspicious because the real destination is hidden', 'Blocks bit.ly for everyone', 'Ignores the link'], answer: 1, why: 'Short links hide where they go, so they are Suspicious; the live page check then follows the link.' },
+      { q: 'Stage 2 finds the domain was registered 3 days ago. What happens to the phishing probability?', options: ['It goes up', 'It goes down', 'It does not change', 'The scan stops'], answer: 0, why: 'Phishing domains are usually days or weeks old, so a very new domain raises the probability.' },
+      { q: 'When does the server run the live page check?', options: ['For every URL', 'When the result is Suspicious', 'Only for trusted websites', 'Only when an admin asks'], answer: 1, why: 'The live page check opens Suspicious pages (without running scripts) and looks for password forms that send data to another website.' },
       { q: 'What does "Risk Level: High" mean?', options: ['The site is slow', 'Strong evidence of phishing - do not continue', 'The site uses many ads', 'The model is unsure'], answer: 1, why: 'High risk corresponds to a Phishing verdict.' },
       { q: 'When is a "URL Pattern Score" shown instead of the phishing probability?', options: ['Always', 'When a safety rule after the model changed the final verdict', 'Only for admins', 'When the site is offline'], answer: 1, why: 'It shows the raw model score honestly, with the rule that overrode it.' },
       { q: 'You blocked a site from the extension. How do you unblock it?', options: ['Press Continue Access on the block page', 'Reinstall Chrome', 'Log in to your PhishGuard account and use Blocked Websites → Unblock', 'Clear browser history'], answer: 2, why: 'Blocks can only be lifted from your account, so a block cannot be bypassed by accident.' },
@@ -223,6 +242,11 @@ const QUIZZES = [
       { q: 'Two-factor authentication (2FA) helps because…', options: ['It makes passwords longer', 'A stolen password alone is not enough to log in', 'It blocks all phishing emails', 'It hides your IP address'], answer: 1, why: 'The attacker also needs your second factor (app code, security key).' },
       { q: 'What should you do with a suspicious link you received?', options: ['Forward it to friends to ask', 'Analyse it with PhishGuard and report it', 'Open it in incognito mode to check', 'Ignore all links forever'], answer: 1, why: 'Reporting helps the admin block it for every user.' },
       { q: 'Using the same password on many sites is risky because…', options: ['It is hard to remember', 'One phishing attack exposes all those accounts', 'Websites do not allow it', 'It slows down login'], answer: 1, why: 'Attackers try stolen passwords on many services ("credential stuffing").' },
+      { q: 'Before typing your password on a page, what should you check first?', options: ['The page colour', 'The domain in the address bar', 'The number of images', 'The page loading speed'], answer: 1, why: 'Only the registered domain tells you who owns the site; logos and layouts can be copied.' },
+      { q: 'How can you see where a link really goes before clicking it?', options: ['Hover over it (or long-press on mobile) and read the address', 'Click it quickly and close the tab', 'Count the words in the message', 'Check the sender\'s profile picture'], answer: 0, why: 'The visible link text can say anything; the real address is shown when you hover.' },
+      { q: 'A pop-up says "Your PC is infected! Call this number now". What should you do?', options: ['Call the number', 'Close the page and do not call or download anything', 'Pay for the cleaning tool', 'Give them remote access'], answer: 1, why: 'This is a tech support scam. Real antivirus software never asks you to call a number from a web page.' },
+      { q: 'Your "manager" emails asking you to buy gift cards urgently and keep it secret. What should you do?', options: ['Buy them quickly', 'Verify by contacting your manager through a known phone number or in person', 'Reply with your bank details', 'Forward it to all colleagues'], answer: 1, why: 'Urgency plus secrecy is a classic impersonation trick. Verify using a channel you already trust.' },
+      { q: 'A password manager helps protect you from phishing because…', options: ['It will not autofill your password on a look-alike domain', 'It blocks all emails', 'It makes your internet faster', 'It hides your IP address'], answer: 0, why: 'It matches the exact domain, so paypa1.com gets nothing even if it looks like PayPal.' },
     ],
   },
 ]
@@ -236,6 +260,23 @@ const loadBest = () => {
 const saveBest = (best) => {
   try { localStorage.setItem(BEST_KEY, JSON.stringify(best)) } catch { /* storage unavailable */ }
 }
+
+const shuffle = (arr) => {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
+// A fresh attempt: questions in random order, options shuffled with the
+// answer index remapped.
+const buildDeck = (quiz) => shuffle(quiz.questions).map((item) => {
+  if (quiz.fixedOptions || item.fixed) return item
+  const order = shuffle(item.options.map((_, i) => i))
+  return { ...item, options: order.map((i) => item.options[i]), answer: order.indexOf(item.answer) }
+})
 
 // ---------------------------------------------------------------- views
 
@@ -364,6 +405,7 @@ function Glossary() {
 function Quiz() {
   const [best, setBest] = useState(loadBest)
   const [quizId, setQuizId] = useState(null)
+  const [deck, setDeck] = useState([])
   const [index, setIndex] = useState(0)
   const [picked, setPicked] = useState(null)
   const [score, setScore] = useState(0)
@@ -372,6 +414,7 @@ function Quiz() {
   const quiz = QUIZZES.find((x) => x.id === quizId)
 
   const start = (id) => {
+    setDeck(buildDeck(QUIZZES.find((x) => x.id === id)))
     setQuizId(id); setIndex(0); setPicked(null); setScore(0); setDone(false)
   }
 
@@ -415,7 +458,7 @@ function Quiz() {
     )
   }
 
-  const item = quiz.questions[index]
+  const item = deck[index]
   const answered = picked != null
 
   const choose = (i) => {

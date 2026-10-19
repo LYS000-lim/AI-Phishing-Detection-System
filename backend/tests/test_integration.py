@@ -187,3 +187,17 @@ def test_admin_can_access(client, tc, admin_token):
     b = client.get("/api/admin/users", headers=auth(admin_token))
     tc.actual(f"{a.status_code}/{b.status_code}")
     assert a.status_code == b.status_code == 200
+
+
+def test_admin_my_scans_tab(client, admin_token, user_token, tc):
+    tc("Detection Logs", "Integration", "The My Scans tab lists only the signed-in admin's own scans "
+       "(Admin Scanner included); the All Users list shows every scan, admins included",
+       "admin scans via /api/admin/scan, user scans via /api/scan",
+       "mine=true: 1 admin row; default list: admin and user rows")
+    client.post("/api/admin/scan", json={"url": "https://example.com/admin-test"}, headers=auth(admin_token))
+    client.post("/api/scan", json={"url": "https://example.org/user-test"}, headers=auth(user_token))
+    mine = client.get("/api/admin/detections?mine=true", headers=auth(admin_token)).json()
+    everyone = client.get("/api/admin/detections", headers=auth(admin_token)).json()
+    tc.actual(f"mine={[r['url'] for r in mine['items']]}; all={[r['url'] for r in everyone['items']]}")
+    assert [r["source"] for r in mine["items"]] == ["admin"]
+    assert {r["source"] for r in everyone["items"]} == {"admin", "website"}

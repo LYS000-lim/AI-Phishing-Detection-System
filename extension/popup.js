@@ -20,8 +20,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     // A rule after the model decided the verdict (domain reputation / HTTPS
     // check), so the raw score is a URL-pattern score, not a probability of
     // the verdict shown.
-    const overridden = ["reputable_domain", "https_only", "brand_impersonation"].includes(scan.uncertain_reason)
-        || scan.legit_reason === "http_reputable" || scan.escalated_by === "brand_impersonation";
+    const overridden = ["reputable_domain", "https_only", "brand_impersonation", "short_link", "new_domain",
+        "established_domain"].includes(scan.uncertain_reason)
+        || ["http_reputable", "reputable_site", "page_check", "established_domain"].includes(scan.legit_reason)
+        || ["brand_impersonation", "page_check", "new_domain"].includes(scan.escalated_by);
     const statusBadgeClass = isPhishing ? "danger" : isUncertain ? "risk-medium" : "safe";
     const statusText = isPhishing ? "PHISHING" : isUncertain ? "SUSPICIOUS" : "SAFE";
     const attack = scan.attack_type || {};
