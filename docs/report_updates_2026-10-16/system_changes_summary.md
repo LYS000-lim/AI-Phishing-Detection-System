@@ -2,7 +2,7 @@
 
 Summary of every change made to the system in this round of work, written as input for updating the FYP report. Report text and figures are not included here.
 
-**Status:** all changes are on branch `fix/viva-url-detection` and are **not committed yet**. 141 automated tests pass, the frontend builds, and all 99 URLs in the viva check list give the expected result.
+**Status:** committed and merged into `main` (commit 1f910ba, merge 9665598, 19 Oct 2026). 140 automated tests pass, the frontend builds, and all 99 URLs in the viva check list give the expected result.
 
 ---
 
@@ -223,6 +223,23 @@ These two legitimate sets were partly used to train stage 2, so they are optimis
 
 ---
 
+## 5a. URLs the final system still gets wrong (checked 19 Oct 2026)
+
+| URL | Truth | System shows | Why |
+|---|---|---|---|
+| `https://www.youtub3.com` | Phishing (look-alike) | Legitimate | Old parked domain; "3" for "e" at the end is not caught as a look-alike of a brand in the list |
+| `https://www.yahooo.com` | Phishing (typo) | Legitimate | Old typo domain; the misspelling rule needs brands of 6+ letters |
+| `https://roblox.com.pt` | Phishing | Legitimate | Brand on a country ending, URL looks normal, domain not young |
+| `http://math.mak.ac.ug/aux` | Phishing (hacked site) | Legitimate | Hacked old university site; nothing in the URL or domain age shows it |
+| `http://dropbox.rev.it`, `https://business-dropbox.me`, `https://simulador-credito-auto-bbva.ideeo.mx` | Phishing | Legitimate | Old domains; Dropbox and BBVA are not in the brand list, so the age lowers the result |
+| `https://someuser.github.io/portfolio/` | Legitimate | Phishing | GitHub Pages is user hosting with no reputation; the URL model alone decides |
+| `https://web3.storage` | Legitimate | Suspicious | Unusual ending; borderline URL score |
+| `https://amazon.co.th/` | Legitimate | Suspicious | Low-ranked Amazon country domain, so the brand rule raises it |
+| `http://httpforever.com/` | Legitimate | Suspicious | Plain-HTTP site outside the top 100,000 |
+| `https://bit.ly/3xYzAbC` (dead short link) | Unknown | Suspicious | A short link that leads nowhere cannot be checked |
+
+These match the limitations in section 5: brand-list coverage, hacked old websites, shared hosting, and URLs whose page cannot be checked.
+
 ## 6. Files
 
 **New**
@@ -251,4 +268,3 @@ These two legitimate sets were partly used to train stage 2, so they are optimis
 ## 7. Still to do
 - Update the report (Chapters 3–5: design, implementation, evaluation, testing tables) with these changes.
 - Re-run the full evaluation scripts on all evaluation sets for final report numbers.
-- Commit the branch after manual testing.
