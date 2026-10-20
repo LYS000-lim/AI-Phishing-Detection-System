@@ -40,3 +40,12 @@ docs/report_updates_2026-10-16/manual_test_2026-10-20/
 backend/tests/fresh_eval.py
 backend/tests/examiner_style_urls.txt
 notebooks/statistical_tests.py
+
+# Removed from GitHub, kept locally only
+SYSTEM_SUMMARY.md
+docs/
+backend/tests/
+notebooks/build_abused_platforms.py
+notebooks/cross_validation.py
+notebooks/harvest_legit_deeplinks.py
+notebooks/harvest_phish_feeds.py
