@@ -35,3 +35,8 @@ frontend/dist/
 ALL_RESULTS.md
 docs/report_figures/
 docs/report_updates_2026-10-16/manual_test_2026-10-20/
+
+# Local evaluation scripts (not part of the report or system)
+backend/tests/fresh_eval.py
+backend/tests/examiner_style_urls.txt
+notebooks/statistical_tests.py
