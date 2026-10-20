@@ -27,3 +27,11 @@ outputs/
 
 # Local editor/tool settings
 .claude/
+
+# Build output
+frontend/dist/
+
+# Report working files (kept local only)
+ALL_RESULTS.md
+docs/report_figures/
+docs/report_updates_2026-10-16/manual_test_2026-10-20/
