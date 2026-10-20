@@ -116,7 +116,7 @@ def lure_signals(url: str, domain: str) -> list:
     its users choose (subdomain, path, query and fragment), as short
     phrases. An empty list means none was found."""
     from .brands import (FEED_BRANDS, MODEL_BRANDS, MY_BRANDS, impersonated_brand,
-                         lookalike_brand, malaysian_brand)
+                         lookalike_brand, malaysian_brand, same_owner)
     from .features import _tokens, suspicious_word_count
     from .reputation import _extract_icann
     parsed = urlparse(url.strip())
@@ -130,7 +130,8 @@ def lure_signals(url: str, domain: str) -> list:
     tokens = set(_tokens(text))
     names = set(FEED_BRANDS) | set(MY_BRANDS) | {a for m in MODEL_BRANDS.values() for a in m["aliases"]}
     own = domain.split(".")[0]
-    if (any(len(n) >= 4 and n in tokens and n not in own for n in names)
+    siblings = same_owner(own)
+    if (any(len(n) >= 4 and n in tokens and n not in own and n not in siblings for n in names)
             or impersonated_brand(url) or malaysian_brand(url) or lookalike_brand(url)):
         found.append("another company's brand name")
     for match in _EMBEDDED_HOST.finditer(rest):
@@ -157,6 +158,12 @@ def _apply_stage2(result: dict, rep: dict, url: str) -> None:
         return
     result["stage2"] = s2
     before, after = result["prediction"], s2["level"]
+    if before == "legitimate" and after == "phishing":
+        # A young domain alone is not proof: genuine new websites exist. An
+        # address the URL model finds normal is raised at most to Suspicious
+        # (fresh evaluation 2026-10-19: 7 of 21 new legitimate sites in
+        # this case were called Phishing).
+        after = "uncertain"
     if after == "legitimate" and before != "legitimate":
         # A hacked old website keeps its age, so a strong lure in the
         # address (another company's brand, a link to another website, a

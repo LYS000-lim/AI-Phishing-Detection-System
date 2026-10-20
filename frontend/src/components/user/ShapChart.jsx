@@ -71,6 +71,10 @@ export default function ShapChart({ explain, formatValue, overrideNote }) {
     || explain?.legit_reason || explain?.escalated_by
   const note = overrideNote !== undefined ? overrideNote
     : ruleApplied ? 'These are model scores only. The final verdict also depends on a post-model rule.' : null
+  // The domain-age check works after the URL model, so it is not a SHAP
+  // bar: it is shown as a separate last step when its level is the result.
+  const s2 = explain?.stage2
+  const ageStep = s2 && s2.level === explain?.prediction ? s2 : null
   const whatIf = Array.isArray(explain?.what_if) ? explain.what_if : []
   const towardsLegit = explain?.prediction !== 'legitimate'
   const flips = whatIf.filter((w) => (towardsLegit ? w.model_result === 'legitimate' : w.model_result !== 'legitimate'))
@@ -92,6 +96,7 @@ export default function ShapChart({ explain, formatValue, overrideNote }) {
         SHAP shows how much each URL feature pushed the model's phishing score up or down,
         starting from the average score of {pct(shap.base_value)} and ending at this
         URL's score of {pct(shap.model_score)}.
+        {ageStep && ` The domain's age then moves it to ${pct(ageStep.p)} (last row).`}
       </p>
 
       <div className="shap-chart" role="img"
@@ -121,6 +126,19 @@ export default function ShapChart({ explain, formatValue, overrideNote }) {
             </span>
           </div>
         ))}
+        {ageStep && (
+          <div className="shap-row shap-age-row">
+            <span className="shap-name">
+              Domain age<span className="shap-value"> (registered {ageStep.registered})</span>
+            </span>
+            <span className="shap-age-text">
+              URL score {pct(shap.model_score)} → final {pct(ageStep.p)}
+            </span>
+            <span className={`shap-num ${ageStep.p >= shap.model_score ? 'evidence-danger' : 'evidence-good'}`}>
+              {signedPct(ageStep.p - shap.model_score)}
+            </span>
+          </div>
+        )}
         <div className="shap-legend">
           <span><i className="shap-key up" /> Pushes towards phishing</span>
           <span><i className="shap-key down" /> Pushes towards legitimate</span>

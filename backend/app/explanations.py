@@ -469,6 +469,39 @@ FEATURE_CLAUSES = {
 }
 
 
+# Features where a value of 0 is the clean, safe-looking value.
+_ZERO_IS_CLEAN = {
+    "NoOfEqualsInURL", "NoOfQMarkInURL", "NoOfAmpersandInURL",
+    "NoOfOtherSpecialCharsInURL", "SpacialCharRatioInURL", "NoOfObfuscatedChar",
+    "ObfuscationRatio", "HasObfuscation", "IsDomainIP", "NoOfDegitsInURL",
+    "DegitRatioInURL", "NoOfSuspiciousWords", "HasBrandOutsideDomain", "NoOfSubDomain",
+}
+# Features where any value above 0 is a warning sign on its own.
+_NONZERO_IS_RISKY = {
+    "HasObfuscation", "IsDomainIP", "HasBrandOutsideDomain", "NoOfSuspiciousWords",
+    "NoOfObfuscatedChar", "ObfuscationRatio",
+}
+
+
+def value_contradicts(feature: str, prediction: str, value) -> bool:
+    """True when the feature's value says the opposite of the direction it is
+    explained in. The model sometimes learned that a clean value (no special
+    characters at all, HTTPS) is slightly more common in its phishing
+    examples; the SHAP chart still shows that, but a card or sentence saying
+    "many special characters" for 0% would be wrong, so those are left out."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return False
+    if feature == "IsHTTPS":
+        clean, risky = v == 1, v == 0
+    elif feature in _ZERO_IS_CLEAN:
+        clean, risky = v == 0, v > 0 and feature in _NONZERO_IS_RISKY
+    else:
+        return False
+    return clean if prediction == "phishing" else risky
+
+
 def _feature_clause(feature: str, prediction: str, value=None) -> str:
     """Short clause describing a feature's direction for the combined-signal sentence."""
     # Value-aware wording where the generic clause would overstate it
@@ -516,6 +549,8 @@ def _combined_signal_sentence(
 
         supports_prediction = shap_value > 0 if want_positive else shap_value < 0
         if not supports_prediction:
+            continue
+        if features is not None and value_contradicts(feature, prediction, features.get(feature)):
             continue
 
         clause = _feature_clause(feature, prediction, (features or {}).get(feature))
@@ -594,6 +629,8 @@ def build_evidence(
             continue
 
         value = features.get(feature)
+        if value_contradicts(feature, prediction, value):
+            continue
         lime_weight = _lime_weight_for_feature(feature, lime_rules)
         candidates.append({
             "title": _feature_title(feature, prediction),

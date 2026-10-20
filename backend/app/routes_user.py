@@ -41,6 +41,70 @@ _URL_REASON = {
 }
 
 
+def _age_note(s2: dict) -> str:
+    if s2["age_days"] < 365:
+        return ("New domains are common for phishing: most phishing domains are bought days "
+                "or weeks before an attack and abandoned soon after.")
+    if s2["age_days"] < 5 * 365:
+        return "Phishing domains are usually only days or weeks old; this one is older."
+    return "Phishing domains are rarely kept this long; most are bought days or weeks before an attack."
+
+
+def _age_line(verdict: dict, url: str) -> str:
+    """The domain-age point of the "Why" text: the registration date, or why
+    there is none (shortener links are explained by their own rule)."""
+    from .reputation import is_user_content_host
+    s2, rep = verdict["stage2"], verdict.get("reputation") or {}
+    if s2:
+        line = (f"Domain age — {s2['domain']} was registered {describe_age(s2['age_days'])} "
+                f"({s2['registered']}). {_age_note(s2)}")
+        if s2.get("changed") == "raised":
+            line += " This raised the result above what the address alone gave."
+        elif s2.get("changed") == "lowered":
+            line += " This lowered the result below what the address alone gave."
+        return line
+    if rep.get("shortener"):
+        return ""
+    if is_user_content_host(url):
+        return (f"Domain age — not used: {urlparse(url).hostname} is on a shared platform where "
+                f"anyone can create pages, so the age of {rep.get('domain') or 'the domain'} says "
+                "nothing about this page.")
+    return (f"Domain age — the registration date of {rep.get('domain') or urlparse(url).hostname} "
+            "could not be found, so the domain's age was not used.")
+
+
+def _phishing_page_lines(page) -> list:
+    """The live page check's part of the "Why" text for a Phishing result."""
+    if page is None:
+        return ["Live page check — not run, so the result is based on the address only."]
+    risks = [s["text"] for s in page["signals"] if s["kind"] == "risk"]
+    if risks:
+        return [f"Live page check — {text}" for text in risks]
+    if not page["reachable"]:
+        info = next((s["text"] for s in page["signals"] if s["kind"] == "info"), "")
+        return [f"Live page check — {info or 'the page could not be opened.'} "
+                "The result is based on the address only."]
+    return ["Live page check — the page was opened and showed no extra phishing behaviour, "
+            "so the result rests on the address."]
+
+
+def _age_card(s2: dict) -> dict:
+    """Evidence card for the domain-age check (red when it raised the
+    result, green when it lowered it)."""
+    raised = s2.get("changed") == "raised" or s2["age_days"] < 365
+    return {
+        "title": "Recently Registered Domain" if raised else "Long-Established Domain",
+        "feature": "DomainAge",
+        "detected_value": f"{s2['registered']} ({describe_age(s2['age_days'])})",
+        "shap_contribution": 1 if raised else -1,
+        "lime_contribution": 0,
+        "found": f"The domain {s2['domain']} was registered {describe_age(s2['age_days'])}.",
+        "why_it_matters": _age_note(s2),
+        "support": ("Raised the result (domain-age check)" if raised
+                    else "Lowered the result (domain-age check)"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Scan / predict
 # ---------------------------------------------------------------------------
@@ -335,22 +399,18 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         url_part = _URL_REASON.get(verdict.get("url_reason"), "its address pattern resembles phishing")
         if lures:
             url_part += f" and it contains {_english_join(lures)}"
-        why_detected = [f"On the URL alone this address was Suspicious: {url_part}."] + [
-            f"Live page check: {text}" for text in safe
-        ] + [
+        why_detected = build_reason_bullets("legitimate", features, shap_out, limit=1) + [
+            f"On the URL alone this address was Suspicious: {url_part}.",
             f"{rep['domain']} is a well-established website (Tranco rank #{rep['rank']:,}), so a "
             "page that names only this website and sends no password to an unknown server is "
             "treated as legitimate.",
-        ]
-        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
-        for card in evidence:
-            card["support"] = "Raised the URL pattern score (outweighed by the live page check)"
+        ] + [f"Live page check — {text}" for text in safe]
+        evidence = build_evidence("legitimate", features, shap_out, lime_out, limit=3)
         plain = (
             f"Legitimate. On the URL alone this address looked suspicious ({url_part}), but "
             f"the live page check found a normal page of {rep['domain']} that names only this "
             "website and sends no password to an unknown server."
         )
-        why_detected += build_reason_bullets("legitimate", features, shap_out, limit=1)
         security_analysis = safe + [
             "The page was opened by the server without running its scripts. A phishing page "
             "can show automated visitors different content, so stay alert if a page asks for "
@@ -365,10 +425,10 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         else:
             url_part = (f"{_URL_REASON.get(verdict.get('url_reason'), 'borderline URL signals')}; "
                         f"URL pattern score {p_phish:.0%}")
-        why_detected = [f"Live page check: {text}" for text in risks] + [
+        why_detected = [
             f"On the URL alone this address was only Suspicious ({url_part}); what the page "
             "itself does is what raised the verdict to phishing.",
-        ]
+        ] + [f"Live page check — {text}" for text in risks]
         evidence = build_evidence(prediction, features, shap_out, lime_out, limit=3)
         plain = (
             f"Phishing. The live page check found: {risks[0]} Do not enter passwords or "
@@ -376,25 +436,18 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         )
         security_analysis = None
     elif "new_domain" in (verdict["uncertain_reason"], verdict["escalated_by"]):
-        # Stage 2 (stage2.py): a recently registered domain raised the
-        # verdict above what the URL pattern alone gave.
+        # Domain-age check (stage2.py): a recently registered domain raised
+        # the verdict above what the URL pattern alone gave. The age itself
+        # is added to the "Why" text below, after the model signals.
         s2 = verdict["stage2"]
-        level = "phishing" if prediction == "phishing" else "warning"
-        cut = s2["thresholds"]["phishing" if prediction == "phishing" else "uncertain"]
-        why_detected = [
-            f"The domain {s2['domain']} was registered {describe_age(s2['age_days'])} "
-            f"({s2['registered']}). Most phishing domains are bought days or weeks before an "
-            "attack and abandoned soon after, while genuine websites keep theirs for years.",
-            f"The stage-2 model combines the URL pattern score ({p_phish:.0%}) with the domain's "
-            f"age into a {s2['p']:.0%} phishing probability, above its {level} level ({cut:.0%}).",
-        ] + build_reason_bullets("phishing", features, shap_out,
-                                 attack_analysis=attack_analysis, limit=2)
-        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
+        why_detected = build_reason_bullets("phishing", features, shap_out,
+                                            attack_analysis=attack_analysis, limit=3)
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=2) + [_age_card(s2)]
         plain = (
             f"{'Phishing' if prediction == 'phishing' else 'Suspicious'}. This website's domain "
             f"was registered {describe_age(s2['age_days'])}. New domains are a strong sign of "
-            f"phishing, and together with the URL pattern score ({p_phish:.0%}) the stage-2 model "
-            f"gives a {s2['p']:.0%} phishing probability. Do not enter passwords or payment "
+            f"phishing, and together with the URL pattern score ({p_phish:.0%}) the domain-age "
+            f"check gives a {s2['p']:.0%} phishing probability. Do not enter passwords or payment "
             "details unless you are sure who runs this website."
         )
         security_analysis = None if prediction == "phishing" else [
@@ -404,30 +457,26 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             "raised this result.",
         ]
     elif "established_domain" in (verdict["uncertain_reason"], verdict["legit_reason"]):
-        # Stage 2: a long-held domain lowered the verdict below what the URL
-        # pattern alone gave.
+        # Domain-age check: a long-held domain lowered the verdict below what
+        # the URL pattern alone gave. The age itself is added to the "Why"
+        # text below, after the model signals.
         s2 = verdict["stage2"]
-        level = "warning" if prediction == "legitimate" else "phishing"
-        cut = s2["thresholds"]["uncertain" if prediction == "legitimate" else "phishing"]
-        why_detected = [
-            f"The domain {s2['domain']} was registered {describe_age(s2['age_days'])} "
-            f"({s2['registered']}). Phishing domains are rarely kept this long; most are bought "
-            "days or weeks before an attack.",
-            f"The stage-2 model combines the URL pattern score ({p_phish:.0%}) with the domain's "
-            f"age into a {s2['p']:.0%} phishing probability, below its {level} level ({cut:.0%}).",
-        ]
         if prediction == "legitimate":
-            why_detected += build_reason_bullets("legitimate", features, shap_out, limit=1)
+            why_detected = build_reason_bullets("legitimate", features, shap_out, limit=1)
+            evidence = build_evidence("legitimate", features, shap_out, lime_out, limit=2)
+        else:
+            why_detected = build_reason_bullets("phishing", features, shap_out, limit=2)
+            evidence = build_evidence("phishing", features, shap_out, lime_out, limit=2)
+            for card in evidence:
+                card["support"] = "Raised the URL pattern score (outweighed by the domain's age)"
+        evidence.append(_age_card(s2))
         if lures:
             why_detected.append(f"The address contains {_english_join(lures)}; a long-established "
                                 "website can still be hacked, so check the address before signing in.")
-        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
-        for card in evidence:
-            card["support"] = "Raised the URL pattern score (outweighed by the domain's age)"
         plain = (
             f"{'Legitimate' if prediction == 'legitimate' else 'Suspicious'}. The address pattern "
             f"resembles phishing ({p_phish:.0%}), but its domain {s2['domain']} has existed since "
-            f"{s2['registered'][:4]}; the stage-2 model gives a {s2['p']:.0%} phishing probability."
+            f"{s2['registered'][:4]}; with the domain's age the phishing probability is {s2['p']:.0%}."
         )
         security_analysis = [
             f"The domain {s2['domain']} was registered in {s2['registered'][:4]}, long before "
@@ -645,10 +694,9 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             "The address has none of the lures a phishing page on a shared or hacked "
             "website relies on: no login or payment wording, no other company's brand "
             "name, no link to another website and no user@ prefix.",
-        ] + build_reason_bullets("legitimate", features, shap_out, limit=1)
-        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
-        for card in evidence:
-            card["support"] = "Raised the URL pattern score (outweighed by the domain check)"
+        ]
+        why_detected = build_reason_bullets("legitimate", features, shap_out, limit=1) + why_detected
+        evidence = build_evidence("legitimate", features, shap_out, lime_out, limit=3)
         plain = (
             f"Legitimate. This address belongs to {rep['domain']}, a well-established "
             "website. Its length and structure resemble phishing to the URL-pattern "
@@ -721,6 +769,17 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
                 "No significant phishing indicators were detected by the ML model.",
                 "The URL structure matches characteristics commonly associated with legitimate websites.",
             ]
+
+    # Fixed order for the "Why" text: the model and rule reasons first, then
+    # the domain age, then the live page check.
+    page_lines = [line for line in why_detected if line.startswith("Live page check")]
+    why_detected = [line for line in why_detected if line not in page_lines][:3]
+    age_line = _age_line(verdict, url)
+    if age_line:
+        why_detected.append(age_line)
+    if prediction == "phishing" and not page_lines:
+        page_lines = _phishing_page_lines(page)
+    why_detected += page_lines[:2]
 
     if checked_url:
         why_detected = redirect_note + why_detected

@@ -43,7 +43,7 @@ const confidenceInfo = (value, prediction, uncertainReason, legitReason, escalat
   if (escalatedBy === 'new_domain') {
     return {
       label: 'High',
-      text: 'The URL pattern alone was not conclusive, but the website\'s domain was registered very recently. The stage-2 model, which combines both, scores it as phishing.',
+      text: 'The URL pattern alone was not conclusive, but the website\'s domain was registered very recently. Together with the URL score, the domain\'s age puts it in the phishing range.',
     }
   }
   if (uncertainReason === 'new_domain') {
@@ -55,13 +55,13 @@ const confidenceInfo = (value, prediction, uncertainReason, legitReason, escalat
   if (legitReason === 'established_domain') {
     return {
       label: 'Medium',
-      text: 'The URL pattern score is high, but the website\'s domain has existed for many years. The stage-2 model, which combines both, scores it below the warning level.',
+      text: 'The URL pattern score is high, but the website\'s domain has existed for many years. Taking the domain\'s age into account brings it below the warning level.',
     }
   }
   if (uncertainReason === 'established_domain') {
     return {
       label: 'Low',
-      text: 'The URL pattern score alone would be phishing, but the domain has existed for many years, so the stage-2 model only rates it suspicious.',
+      text: 'The URL pattern score alone would be phishing, but the domain has existed for many years, so with the domain\'s age it is only rated suspicious.',
     }
   }
   if (escalatedBy === 'page_check') {
@@ -217,145 +217,12 @@ const splitReason = (reason) => {
   }
 }
 
-// Plain label for a domain's age, used by the decision box and age panel.
-const ageLabel = (days) => (days < 365 ? 'new' : days < 5 * 365 ? 'fairly recent' : 'long-established')
-
+// Plain wording for how long ago a domain was registered.
 const ageText = (days) => {
   if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`
   if (days < 365) return `about ${Math.round(days / 30.4)} months ago`
   const years = Math.round(days / 365.25)
   return `about ${years} year${years === 1 ? '' : 's'} ago`
-}
-
-// Stage 2 (backend stage2.py): the URL model's score combined with the
-// domain's age by a second, logistic-regression model.
-function Stage2Panel({ stage2, urlScore }) {
-  if (!stage2) return null
-  const levels = { phishing: 'Phishing', uncertain: 'Suspicious', legitimate: 'Legitimate' }
-  return (
-    <details className="panel result-section detail-panel stage2-panel">
-      <summary>Domain age details</summary>
-      <p>
-        This website (<span className="mono">{stage2.domain}</span>) was registered on{' '}
-        {stage2.registered}, {ageText(stage2.age_days)}.{' '}
-        {stage2.age_days < 365
-          ? 'New websites are more often phishing, because phishing domains are usually bought days or weeks before an attack.'
-          : stage2.age_days < 5 * 365
-          ? 'Phishing domains are usually only days or weeks old; this one is older, but not long-established.'
-          : 'Websites that have existed this long are rarely phishing domains.'}
-      </p>
-      <p className="section-intro">
-        Technical details: a second machine-learning model (logistic regression) combines the URL
-        pattern score with the domain's age.
-      </p>
-      <dl className="stage2-grid">
-        <dt>Domain</dt>
-        <dd className="mono">{stage2.domain}</dd>
-        <dt>Registered</dt>
-        <dd>{stage2.registered} ({ageText(stage2.age_days)})</dd>
-        <dt>URL pattern score (stage 1)</dt>
-        <dd>{pct(urlScore)}</dd>
-        <dt>Phishing probability (stage 2)</dt>
-        <dd><strong>{pct(stage2.p)}</strong> → {levels[stage2.level]}</dd>
-        <dt>Stage-2 thresholds</dt>
-        <dd>Suspicious from {pct(stage2.thresholds.uncertain)}, Phishing from {pct(stage2.thresholds.phishing)}</dd>
-      </dl>
-      {stage2.changed && (
-        <p className={`stage2-note ${stage2.changed}`}>
-          {stage2.changed === 'raised'
-            ? 'The domain\'s young age raised the result above what the URL pattern alone gave.'
-            : 'The domain\'s long history lowered the result below what the URL pattern alone gave.'}
-        </p>
-      )}
-    </details>
-  )
-}
-
-const PAGE_ICONS = { risk: '⚠', safe: '✓', info: 'ℹ' }
-
-// Findings of the live page check (backend page_check.py): the server opened
-// the page without running its scripts.
-function PageCheckPanel({ page }) {
-  if (!page) return null
-  const moved = page.final_url && page.final_url !== page.url
-  return (
-    <details className="panel result-section detail-panel page-check">
-      <summary>Live page check details</summary>
-      <p className="section-intro">
-        The server opened this page (without running its scripts or submitting anything) to
-        check what the URL alone cannot show.
-      </p>
-      {moved && (
-        <p className="page-final">
-          Page reached: <span className="mono">{page.final_url}</span>
-        </p>
-      )}
-      <ul className="page-signals">
-        {page.signals.map((signal) => (
-          <li key={signal.code} className={`page-signal ${signal.kind}`}>
-            <span className="page-signal-icon" aria-hidden>{PAGE_ICONS[signal.kind]}</span>
-            <span>{signal.text}</span>
-          </li>
-        ))}
-      </ul>
-      {page.seconds != null && <p className="page-time">Checked in {page.seconds} s.</p>}
-    </details>
-  )
-}
-
-const LEVEL_NAMES = { phishing: 'Phishing', uncertain: 'Suspicious', legitimate: 'Legitimate' }
-const LEVEL_TONE = { phishing: 'bad', uncertain: 'warn', legitimate: 'good' }
-
-// "How this result was decided": one plain line per check, in the order
-// the backend runs them (URL model, domain age, safety rules, page check).
-function DecisionSteps({ result, stage2, page, ruleNote }) {
-  const urlLevel = result.phishing_probability >= 0.89 ? 'phishing'
-    : result.phishing_probability >= 0.73 ? 'uncertain' : 'legitimate'
-  const steps = [{
-    text: `URL check (AI model): the address alone looks ${
-      { phishing: 'like phishing', uncertain: 'suspicious', legitimate: 'normal' }[urlLevel]}`,
-    tag: LEVEL_NAMES[urlLevel],
-    tone: LEVEL_TONE[urlLevel],
-  }]
-  if (stage2) {
-    steps.push({
-      text: `Domain age: registered ${stage2.registered}, ${ageText(stage2.age_days)}${
-        ''} (${ageLabel(stage2.age_days)})`,
-      tag: stage2.changed ? `${stage2.changed === 'raised' ? 'Raised' : 'Lowered'} to ${LEVEL_NAMES[stage2.level]}` : 'No change',
-      tone: stage2.changed ? LEVEL_TONE[stage2.level] : 'none',
-    })
-  }
-  const pageChanged = result.legit_reason === 'page_check' || result.escalated_by === 'page_check'
-  const stage2Decided = ['new_domain', 'established_domain'].includes(
-    result.uncertain_reason || result.legit_reason || result.escalated_by)
-  if (ruleNote && !pageChanged && !stage2Decided) {
-    steps.push({ text: `Safety rule: ${ruleNote}`, tag: LEVEL_NAMES[result.prediction], tone: LEVEL_TONE[result.prediction] })
-  }
-  if (page) {
-    const risk = page.signals.find((s) => s.kind === 'risk')
-    const safe = page.signals.find((s) => s.kind === 'safe')
-    const opened = page.reachable && (risk || safe)
-    steps.push({
-      text: opened ? `Page check: ${(risk || safe).text}` : 'Page check: the page could not be opened, so it was not checked',
-      tag: pageChanged ? `${result.prediction === 'phishing' ? 'Raised' : 'Lowered'} to ${LEVEL_NAMES[result.prediction]}` : 'No change',
-      tone: pageChanged ? LEVEL_TONE[result.prediction] : 'none',
-      muted: !opened,
-    })
-  }
-  return (
-    <section className="panel result-section decision-steps">
-      <h3>How this result was decided</h3>
-      <ol>
-        {steps.map((step, i) => (
-          <li key={i} className={step.muted ? 'muted' : ''}>
-            <span className="step-no">{i + 1}</span>
-            <span className="step-text">{step.text}</span>
-            <span className={`step-tag tone-${step.tone}`}>{step.tag}</span>
-          </li>
-        ))}
-      </ol>
-    </section>
-  )
 }
 
 export default function Scanner({ scanFn = scanURL }) {
@@ -436,6 +303,14 @@ export default function Scanner({ scanFn = scanURL }) {
     && (result.uncertain_reason === 'new_domain' || result.escalated_by === 'new_domain')
   const isEstablished = Boolean(result) && !isTrusted
     && (result.uncertain_reason === 'established_domain' || result.legit_reason === 'established_domain')
+  // Display only (verdict and saved values unchanged): when the domain-age
+  // model's level is the final result, its combined probability is shown, so
+  // the percentage always agrees with the verdict. Otherwise the URL model's
+  // probability is shown as before.
+  const useCombined = Boolean(stage2) && !isTrusted && stage2.level === result?.prediction
+  const shownP = useCombined ? stage2.p : result?.phishing_probability
+  const shownConfidence = useCombined ? Math.max(stage2.p, 1 - stage2.p) : result?.confidence
+  const belowWarning = !useCombined && result?.prediction === 'legitimate' && (result?.phishing_probability ?? 0) >= 0.5
   const isShortLink = isUncertain && result.uncertain_reason === 'short_link'
   // What kept a warning on a well-established domain (login wording, another
   // brand's name, a link to another website, a user@ prefix).
@@ -449,9 +324,9 @@ export default function Scanner({ scanFn = scanURL }) {
     : isBrand || isBrandEscalated
     ? `Verdict raised: "${result?.brand}" used on a domain that is not the brand's own`
     : isNewDomain
-    ? `Final verdict from the stage-2 model: domain registered ${stage2 ? ageText(stage2.age_days) : 'recently'}`
+    ? `Final verdict from the domain-age check: domain registered ${stage2 ? ageText(stage2.age_days) : 'recently'}`
     : isEstablished
-    ? `Final verdict from the stage-2 model: domain registered in ${stage2 ? stage2.registered.slice(0, 4) : 'the past'}`
+    ? `Final verdict from the domain-age check: domain registered in ${stage2 ? stage2.registered.slice(0, 4) : 'the past'}`
     : isPageEscalated
     ? 'Verdict raised by the live page check'
     : isPageLegit
@@ -560,7 +435,7 @@ export default function Scanner({ scanFn = scanURL }) {
             </div>
           ) : (
             <div className="result-metrics">
-              {isOverridden ? (
+              {isOverridden && !useCombined ? (
                 <div className="metric-card">
                   <span className="metric-label">URL Pattern Score</span>
                   <strong>{pct(result.phishing_probability)}</strong>
@@ -570,11 +445,11 @@ export default function Scanner({ scanFn = scanURL }) {
                 <>
                   <div className="metric-card">
                     <span className="metric-label">Phishing Probability</span>
-                    <strong>{pct(result.phishing_probability)}</strong>
+                    <strong>{pct(shownP)}</strong>
                   </div>
                   <div className="metric-card">
                     <span className="metric-label">Legitimate Probability</span>
-                    <strong>{pct(result.legitimate_probability)}</strong>
+                    <strong>{pct(1 - Math.round(shownP * 1000) / 1000)}</strong>
                   </div>
                 </>
               )}
@@ -584,15 +459,16 @@ export default function Scanner({ scanFn = scanURL }) {
               </div>
               <div className="metric-card">
                 <span className="metric-label">Confidence</span>
-                <strong>{confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by, result.lookalike).label}</strong>
-                {!isOverridden && <span className="metric-sub">{pct(result.confidence)}</span>}
+                <strong>{confidenceInfo(shownConfidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by, result.lookalike).label}</strong>
+                {(!isOverridden || useCombined) && <span className="metric-sub">{pct(shownConfidence)}</span>}
               </div>
             </div>
           )}
 
           {!isTrusted && (
             <p className="confidence-note">
-              {confidenceInfo(result.confidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by, result.lookalike).text}
+              {confidenceInfo(shownConfidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by, result.lookalike).text}
+              {belowWarning && ' Warning level: Suspicious from 73%, Phishing from 89% – this URL scored below it.'}
             </p>
           )}
 
@@ -708,9 +584,6 @@ export default function Scanner({ scanFn = scanURL }) {
         </section>
       )}
 
-      {result && !isTrusted && (
-        <DecisionSteps result={result} stage2={stage2} page={pageCheck} ruleNote={isOverridden ? overrideNote : null} />
-      )}
 
       {isTrusted && (
         <>
@@ -789,7 +662,7 @@ export default function Scanner({ scanFn = scanURL }) {
 
             <p className="reason-lead">The AI identified:</p>
             <ul className="reason-list phishing-reasons">
-              {(reasons.length ? reasons : attack?.reason || []).slice(0, 4).map((reason, index) => {
+              {(reasons.length ? reasons : attack?.reason || []).slice(0, 7).map((reason, index) => {
                 const parsed = splitReason(reason)
                 return (
                   <li key={index}>
@@ -896,7 +769,7 @@ export default function Scanner({ scanFn = scanURL }) {
 
             <p className="reason-lead">The AI identified:</p>
             <ul className="reason-list phishing-reasons">
-              {reasons.slice(0, 4).map((reason, index) => {
+              {reasons.slice(0, 7).map((reason, index) => {
                 const parsed = splitReason(reason)
                 return (
                   <li key={index}>
@@ -994,17 +867,17 @@ export default function Scanner({ scanFn = scanURL }) {
             <h3>Why was this classified as legitimate?</h3>
             <p className="section-intro">
               {isEstablished
-                ? 'The URL-pattern model alone scored this address high. The stage-2 model, which also uses the domain\'s age, explains why it is still legitimate — the AI Explanation Evidence section further down shows the model signals (SHAP/LIME) that raised the URL score:'
+                ? 'The URL pattern alone scored this address high, but the domain\'s age shows why it is still legitimate. The AI Explanation Evidence section further down shows the signals (SHAP/LIME) that support this result:'
                 : isPageLegit
-                ? 'On the URL alone this address looked suspicious. The points below, from the live page check, show why it is still legitimate — the AI Explanation Evidence section further down shows the model signals (SHAP/LIME) that raised the URL score:'
+                ? 'On the URL alone this address looked suspicious, but the live page check shows why it is still legitimate. The AI Explanation Evidence section further down shows the signals (SHAP/LIME) that support this result:'
                 : isReputableSite
-                ? 'The URL-pattern model alone scored this address high. The checks below show why it is still legitimate — the AI Explanation Evidence section further down shows the model signals (SHAP/LIME) that raised the score:'
+                ? 'The URL pattern alone scored this address high. The checks below show why it is still legitimate. The AI Explanation Evidence section further down shows the signals (SHAP/LIME) that support this result:'
                 : isHttpReputable
                 ? 'The only warning signal for this URL is the missing HTTPS connection. The explanation below is in plain language — the AI Explanation Evidence section further down shows the technical model signals (SHAP/LIME) behind it:'
                 : 'The AI model identified no significant phishing patterns from the URL. The explanation below is in plain language — the AI Explanation Evidence section further down shows the technical model signals (SHAP/LIME) behind it:'}
             </p>
             <ul className="reason-list legitimate-reasons">
-              {reasons.slice(0, 4).map((reason, index) => {
+              {reasons.slice(0, 7).map((reason, index) => {
                 const parsed = splitReason(reason)
                 return (
                   <li key={index}>
@@ -1026,11 +899,11 @@ export default function Scanner({ scanFn = scanURL }) {
             <h3>AI Explanation Evidence</h3>
             <p className="section-intro">
               {isEstablished
-                ? 'These signals raised the URL pattern score. The domain\'s long history outweighed them in the stage-2 model.'
+                ? 'Only evidence supporting the legitimate classification is shown: the URL signals that point to a legitimate website, and the domain\'s age, which outweighed the signals that raised the URL score (see the chart above).'
                 : isPageLegit
-                ? 'These signals raised the URL pattern score. The live page check outweighed them.'
+                ? 'Only evidence supporting the legitimate classification is shown. The live page check outweighed the signals that raised the URL score (see the chart above).'
                 : isReputableSite
-                ? "These signals raised the URL pattern score. On this well-established domain they come from the site's own subdomain, path or document ID, so they did not decide the verdict."
+                ? "Only evidence supporting the legitimate classification is shown. The signals that raised the URL score (see the chart above) come from the site's own subdomain, path or document ID, so they did not decide the verdict."
                 : isHttpReputable
                 ? 'The missing-HTTPS signal is shown first, then the strongest signals supporting the legitimate classification.'
                 : 'Only evidence supporting the legitimate classification is shown.'}
@@ -1079,9 +952,7 @@ export default function Scanner({ scanFn = scanURL }) {
           </section>
         </>
       )}
-      {result && !isTrusted && <Stage2Panel stage2={stage2} urlScore={result.phishing_probability} />}
 
-      {result && !isTrusted && <PageCheckPanel page={pageCheck} />}
     </>
   )
 }

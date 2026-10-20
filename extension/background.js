@@ -38,6 +38,27 @@ function isScannable(url) {
     }
 }
 
+// Redirect hops of trusted services: a Google search-result click goes
+// through google.com/url or google.com/goto (destination often encoded),
+// Facebook through l.facebook.com/l.php, Outlook mail links through Safe
+// Links. The hop itself is not scanned: its "Trusted" result would describe
+// Google, not the site being opened. When the hop forwards with an HTTP
+// redirect, the browser reports no new navigation for the real website, so
+// that website is scanned when the tab commits it (onCommitted below).
+function isRedirectHop(url) {
+    try {
+        const { hostname, pathname } = new URL(url);
+        const host = hostname.toLowerCase();
+        const isGoogle = /(^|\.)google\.[a-z.]+$/.test(host);
+        return (isGoogle && (pathname === "/url" || pathname === "/goto"))
+            || (/(^|\.)(l|lm)\.facebook\.com$/.test(host) && pathname === "/l.php")
+            || (/(^|\.)l\.instagram\.com$/.test(host))
+            || host.endsWith(".safelinks.protection.outlook.com");
+    } catch {
+        return false;
+    }
+}
+
 // ----------------------------------------------------------------
 // Session bypass ("Continue Access") — cleared automatically when the
 // browser session ends, since chrome.storage.session is in-memory only.
@@ -272,6 +293,10 @@ async function announceUncertainToast(tabId, result) {
 // blocked (the ML model only needs the URL string, not page content).
 // ----------------------------------------------------------------
 
+// Tabs whose navigation started on a redirect hop and has not yet reached
+// a website of its own.
+const pendingHops = new Set();
+
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     if (details.frameId !== 0) {
         return;
@@ -279,6 +304,32 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
     const url = details.url;
 
+    // A result waiting for the previous page in this tab (e.g. a Google
+    // search page that never picked up its "Trusted" notice) must not be
+    // shown on the next website.
+    await chrome.storage.session.remove([`safeToast_${details.tabId}`, `uncertainToast_${details.tabId}`]);
+
+    if (isRedirectHop(url)) {
+        pendingHops.add(details.tabId);
+        return;
+    }
+    // A hop that forwards with a script starts a new navigation of its own.
+    pendingHops.delete(details.tabId);
+
+    await scanNavigation(details.tabId, url);
+});
+
+chrome.webNavigation.onCommitted.addListener(async (details) => {
+    if (details.frameId !== 0 || !pendingHops.has(details.tabId) || isRedirectHop(details.url)) {
+        return;
+    }
+    pendingHops.delete(details.tabId);
+    await scanNavigation(details.tabId, details.url);
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => pendingHops.delete(tabId));
+
+async function scanNavigation(tabId, url) {
     if (!isScannable(url)) {
         return;
     }
@@ -303,7 +354,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
             confidence: null,
             attack_type: "Blocked by user",
         });
-        await showWarningPage(details.tabId, "blocked", {
+        await showWarningPage(tabId, "blocked", {
             url,
             domain: hostnameOf(url),
             blockedBy: "user",
@@ -335,7 +386,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
                 confidence: null,
                 attack_type: blacklist.by_user ? "Blocked by user" : "Blacklisted domain",
             });
-            await showWarningPage(details.tabId, "blocked", {
+            await showWarningPage(tabId, "blocked", {
                 url,
                 domain: blacklist.domain,
                 blockedBy: blacklist.blocked_by || (blacklist.by_user ? "user" : "admin"),
@@ -400,19 +451,19 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
         });
 
         if (result.prediction === "phishing") {
-            await showWarningPage(details.tabId, "warning", {
+            await showWarningPage(tabId, "warning", {
                 url,
                 result,
             });
         } else if (result.prediction === "uncertain") {
-            await announceUncertainToast(details.tabId, result);
+            await announceUncertainToast(tabId, result);
         } else {
-            await announceSafeToast(details.tabId, result);
+            await announceSafeToast(tabId, result);
         }
     } catch (error) {
         console.error("PhishGuard scan failed:", error);
     }
-});
+}
 
 // ----------------------------------------------------------------
 // Continue Access can only release the block — it can't guarantee the

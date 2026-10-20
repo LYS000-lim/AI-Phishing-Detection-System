@@ -11,13 +11,27 @@
 // (push arriving before this script had attached its listener).
 
 chrome.runtime.onMessage.addListener((message) => {
-    if (message.action === "SHOW_SAFE_TOAST" && message.data) {
+    if (message.action === "SHOW_SAFE_TOAST" && isForThisPage(message.data)) {
         showSafeToast(message.data);
     }
-    if (message.action === "SHOW_UNCERTAIN_TOAST" && message.data) {
+    if (message.action === "SHOW_UNCERTAIN_TOAST" && isForThisPage(message.data)) {
         showUncertainToast(message.data);
     }
 });
+
+// A notice is only shown on the website it was scanned for ("www." aside),
+// never on the next page opened in the same tab.
+function isForThisPage(data) {
+    if (!data?.url) {
+        return false;
+    }
+    try {
+        const host = (h) => h.toLowerCase().replace(/^www\./, "");
+        return host(new URL(data.url).hostname) === host(location.hostname);
+    } catch {
+        return false;
+    }
+}
 
 // ----------------------------------------------------------------
 // Presence ping — lets the PhishGuard website page (Browser Extension
@@ -51,11 +65,11 @@ window.addEventListener("message", (event) => {
     // single one-shot pull can lose that race consistently for exactly
     // those fast sites, so retry briefly instead of checking once.
     const data = await pollForToast("GET_SAFE_TOAST");
-    if (data) {
+    if (isForThisPage(data)) {
         showSafeToast(data);
     }
     const uncertainData = await pollForToast("GET_UNCERTAIN_TOAST");
-    if (uncertainData) {
+    if (isForThisPage(uncertainData)) {
         showUncertainToast(uncertainData);
     }
 })();
@@ -77,9 +91,11 @@ async function pollForToast(action, maxAttempts = 10, intervalMs = 200) {
 
 function showSafeToast(data) {
     const attach = () => {
-        if (document.getElementById("phishguard-safe-toast") || !document.documentElement) {
+        if (!document.documentElement) {
             return;
         }
+        // The newest result replaces one already on screen.
+        document.getElementById("phishguard-safe-toast")?.remove();
 
         const el = document.createElement("div");
         el.id = "phishguard-safe-toast";
@@ -153,9 +169,10 @@ function showSafeToast(data) {
 // green) from showSafeToast so it never reads as "verified safe".
 function showUncertainToast(data) {
     const attach = () => {
-        if (document.getElementById("phishguard-uncertain-toast") || !document.documentElement) {
+        if (!document.documentElement) {
             return;
         }
+        document.getElementById("phishguard-uncertain-toast")?.remove();
 
         const el = document.createElement("div");
         el.id = "phishguard-uncertain-toast";

@@ -43,7 +43,36 @@ FEED_BRANDS = (
     "leboncoin", "bankofamerica", "lloydsbank", "americanas", "avira", "docusign",
     "huntington", "bellsouth", "sbcglobal", "linkedin", "naver", "snapchat",
     "runescape", "xfinity", "craigslist",
+    # Added 2026-10-19 by the same counts, now also allowing 4-letter names
+    # (matched only as a whole word, so uspstracking.fun or bitauto.my do
+    # not match): >= 150 2024-25 phishing hosts, >= 10x more often than in
+    # other top-1M domains. Generic words (mail, login, page, case, orange,
+    # mint, ...) and names of Malaysian companies with unranked official
+    # sites (aeon) or close to an ordinary word (infura ~ infra) were left
+    # out. roblox does not qualify (145 hosts, 6.9x).
+    "usps", "ebay", "smbc", "hsbc", "onedrive", "citi", "mufg",
+    "sharepoint", "vodafone", "itau",
 )
+# For the names added on 2026-10-19 a domain named exactly after the brand
+# (hsbc.com.tr, ebay.cn, itau.com - the brands' own country sites, many
+# ranked below the top 250,000) is not counted; only the brand combined
+# with other words is (usps-postal-redelivery.com). Brand top-level domains
+# (nic.hsbc) are not counted either, and these short names are left out of
+# the look-alike check (it4u.net is not an Itau imitation).
+_OWN_NAME_EXEMPT = {"usps", "ebay", "smbc", "hsbc", "onedrive", "citi", "mufg",
+                    "sharepoint", "vodafone", "itau"}
+# Names owned by the same company: SharePoint's own pages are called
+# onedrive.aspx, so one of these names on another's domain is not a lure.
+BRAND_FAMILIES = (
+    {"microsoft", "microsoftonline", "outlook", "hotmail", "onedrive", "sharepoint", "office", "live"},
+)
+
+
+def same_owner(name: str) -> set:
+    """Brand names owned by the company that owns `name` (itself included)."""
+    return set().union({name}, *(f for f in BRAND_FAMILIES if name in f))
+
+
 _DISPLAY = {
     "whatsapp": "WhatsApp", "metamask": "MetaMask", "icloud": "iCloud", "paypal": "PayPal",
     "wellsfargo": "Wells Fargo", "opensea": "OpenSea", "tiktok": "TikTok",
@@ -53,12 +82,14 @@ _DISPLAY = {
     "commbank": "CommBank", "bankofamerica": "Bank of America", "lloydsbank": "Lloyds Bank",
     "docusign": "DocuSign", "bellsouth": "BellSouth", "sbcglobal": "SBCGlobal",
     "linkedin": "LinkedIn", "kucoin": "KuCoin", "runescape": "RuneScape",
+    "usps": "USPS", "ebay": "eBay", "smbc": "SMBC", "hsbc": "HSBC", "onedrive": "OneDrive",
+    "mufg": "MUFG", "sharepoint": "SharePoint", "itau": "Itaú",
 }
 FINANCIAL = {
     "coinbase", "metamask", "trezor", "ledger", "paypal", "chase", "wellsfargo", "opensea",
     "binance", "bancolombia", "kraken", "exodus", "santander", "robinhood", "kucoin",
     "gemini", "walletconnect", "trustwallet", "uniswap", "fidelity", "caixa", "commbank",
-    "bankofamerica", "lloydsbank", "huntington",
+    "bankofamerica", "lloydsbank", "huntington", "smbc", "hsbc", "citi", "mufg", "itau",
 }
 
 
@@ -75,7 +106,7 @@ _MIN_SUBSTRING_LEN = 6
 # legitimate Tranco domains (worldenergyoutlook.org, hledger.org,
 # survivinginfidelity.com, opticloud.de, royrogersrestaurants.com).
 _WORD_BRANDS = {"icloud", "outlook", "ledger", "fidelity", "rogers", "gemini",
-                "exodus", "kraken", "allegro", "caixa"}
+                "exodus", "kraken", "allegro", "caixa", "onedrive", "vodafone"}
 _BOUNDARY = r"(?<![a-z]){}(?![a-z])"
 _PATTERNS = [
     (b, re.compile(_BOUNDARY.format(re.escape(b))
@@ -181,9 +212,11 @@ def impersonated_brand(url: str) -> "str | None":
     host = _host(url)
     if not host:
         return None
+    parts = _extract_icann(host)
     host = _unranked_part(host)
     for brand, pattern in _PATTERNS:
-        if pattern.search(host):
+        if pattern.search(host) and not (brand in _OWN_NAME_EXEMPT
+                                         and brand in (parts.domain, parts.suffix)):
             return brand
     return None
 
@@ -212,7 +245,8 @@ _ALIAS_DISPLAY = {alias: name for name, meta in MODEL_BRANDS.items() for alias i
 _FINANCIAL_ALIASES = {alias for meta in MODEL_BRANDS.values() if meta["financial"]
                       for alias in meta["aliases"]}
 # Longest first, so maybank2u is reported rather than maybank.
-_LOOKALIKE_NAMES = sorted({b for b in set(FEED_BRANDS) | set(_ALIAS_DISPLAY) if len(b) >= 4},
+_LOOKALIKE_NAMES = sorted({b for b in set(FEED_BRANDS) | set(_ALIAS_DISPLAY)
+                           if len(b) >= 4 and b not in _OWN_NAME_EXEMPT},
                           key=len, reverse=True)
 _DIGIT_LETTERS = {"0": "o", "3": "e", "4": "a", "5": "s", "7": "t"}
 # Cyrillic and Greek letters that look like Latin ones (homograph attacks).

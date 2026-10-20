@@ -43,6 +43,7 @@ The allowlist is the only step that skips the ML model. Every other step runs af
 - **Typed addresses as https:** `inti.edu.my` is now checked as `https://inti.edu.my`, as a browser opens it. Before, it was checked as `http://`, so the missing-HTTPS signal dominated.
 - **Allowlist holes closed:** phishing on customer sub-sites of trusted companies (`*.cloudapp.azure.com`, `*.netlify.com`) is no longer shown as Trusted Website. Netlify's own pages are still trusted.
 - **Open-redirect hole closed:** a trusted-domain link that forwards to another website (e.g. `google.com/url?q=https://evil-site`) is judged by the destination. Before, it was shown as Trusted.
+- **Allowlist not grown:** it still holds 238 domains. Every fix in this round uses the model, data-built lists or general rules instead of adding websites by hand.
 
 ### 3.2 Brand rule extensions
 - **Look-alike characters** are shown as **Phishing**:
@@ -184,6 +185,25 @@ These two legitimate sets were partly used to train stage 2, so they are optimis
 - **Legitimate explanations:** a Legitimate result decided by a later step (old domain, reputable site, page check) now also ends with the model's own sentence about the signals that pointed to legitimate.
 - **Detection Logs:** the "All Users" tab now lists every scan, including admins' Admin Scanner scans, and has an "Admin Scanner" source filter. A new **"My Scans"** tab lists only the signed-in admin's own scans. CSV/PDF export follows the tab. The Admin Dashboard statistics still leave admin test scans out.
 
+### 3.9a Later display and extension changes (19 Oct 2026, not yet committed)
+- **Decision box and domain-age panel removed:** the "How this result was decided" box and the "Domain age details" panel are gone. The live page check still runs for Suspicious results (and for Phishing results in the explanation) but has no panel of its own.
+- **Probability shown agrees with the verdict:** when the domain-age model's level is the final result, the Phishing/Legitimate Probability cards show its combined probability (e.g. nsr.org.my: 9.7% instead of the URL-only 62.7%). Without a domain age, the URL model's probability is shown as before; if it is 50% or more but the result is Legitimate, the note "Warning level: Suspicious from 73%, Phishing from 89% – this URL scored below it." is added. Rule-decided results keep the "URL Pattern Score" card. Display only: verdicts and saved data are unchanged.
+- **Extension skips redirect hops:** Google `/url` and `/goto`, Facebook `l.php`, Instagram `l.instagram.com` and Outlook Safe Links are not scanned; the browser moves on to the real website, which is scanned once the tab reaches it (also when the hop forwards with an HTTP redirect, which starts no new navigation). Before, the hop showed a misleading "Safe – Trusted Domain Allowlist" pop-up.
+- **"Why" text in a fixed order:** model signals first, then other rule reasons, then **Domain age** (registration date, or that it could not be found / is not used on a shared platform), then **Live page check**. For a Phishing result the page check line always appears (its finding, or that the page could not be opened / showed nothing extra).
+- **Explanation evidence agrees with the verdict:** a Legitimate result decided by the domain age, reputable-site rule or page check now shows the signals that support legitimate, plus a domain-age card, instead of the signals that raised the URL score. The SHAP chart is unchanged (it is the URL model's output) but gains a last "Domain age" row (e.g. URL score 78.3% → final 16.6%).
+- **Contradicting cards removed:** an evidence card or reason clause is left out when the value says the opposite of its wording (e.g. 0.0% special characters explained as "cluttered addresses"; HTTPS = Yes as a phishing sign). SHAP still shows these values, since the model learned them from PhiUSIIL.
+- **No "stage 2" wording for users:** the result page, explanations and Learn page say "domain-age check" instead.
+- **Probabilities add up to 100%** (e.g. 16.6% + 83.4%, was 83.5%).
+- **Extension pop-up only for the page it describes:** when a tab starts opening a new page, a result still waiting for the previous page is dropped, and a pop-up is shown only on the website it was scanned for. Before, clicking a Google result could show the Google search page's "Trusted Domain Allowlist" pop-up on the destination site, and the real result was then skipped because a pop-up was already on screen. A newer result now replaces one already shown.
+- **Extension password-box warning removed** (it was not needed).
+
+### 3.9b Fresh evaluation and two fixes (19 Oct 2026, not yet committed)
+- **Fresh test set** (`backend/tests/fresh_eval.py`, `backend/tests/examiner_style_urls.txt`): 1,868 legitimate URLs (homepage + up to 3 sitemap deep links) from 473 websites never used before (160 Tranco 5k-100k, 159 Tranco 100k-1M, 154 Malaysian .my), 385 phishing URLs first listed on 19 Oct 2026 (OpenPhish, phishunt), and 149 examiner-style URLs. Run through `pipeline.evaluate()` exactly as `/api/scan`.
+- **Fix 1 - new domain raises at most to Suspicious:** when the URL model alone finds the address normal, a young domain now raises the result to Suspicious, not Phishing (`ml_state._apply_stage2`).
+- **Fix 2 - more brand names:** the brand rule's list gained USPS, eBay, SMBC, HSBC, OneDrive, Citi, MUFG, SharePoint, Vodafone and Itau, chosen by the same counts as before (>= 150 2024-25 phishing hosts, >= 10x more than in other top-1M domains), now allowing 4-letter names as whole words. A domain named exactly after the brand (hsbc.com.tr) or a brand TLD (nic.hsbc) is not counted, these names are not used for look-alike matching, and Microsoft names inside a Microsoft-owned address (onedrive.aspx on sharepoint.com) are not a lure. On Tranco 250k-1M, 12 of 750,000 domains match (0.002%). Roblox did not meet the counts and was not added.
+- **Results (after fixes):** legitimate called Phishing 0.2% (4/1,868; 0/473 homepages), Suspicious 3.4%; fresh phishing called Phishing 81.0%, Suspicious 14.5%, missed 4.4% (17/385, about 3-4 of them likely feed labelling errors). Before the fixes: legitimate called Phishing 1.1%, phishing called Phishing 86.0%, missed 4.4%. Examiner-style set: 0/98 legitimate called Phishing; 44/51 phishing called Phishing, 1 missed (roblox-robux-free.com).
+- **Domain-age lookups can fail:** under many parallel lookups RDAP/WHOIS servers rate-limit; 26% of URLs had no age in the final run (63% in the first, overloaded run). Without an age the result falls back to the URL model and rules.
+
 ### 3.10 Other fixes found during system testing
 - **PDF exports:** admin Detection Logs and Blacklist PDFs were unreadable. They are rebuilt as A4 landscape tables with wrapped columns. The Blacklist export no longer leaves a stray PDF file in the project folder.
 - **Logout:** opening the Logout page directly showed "Goodbye, there". It now waits for the signed-in user and shows their name.
@@ -235,10 +255,31 @@ These two legitimate sets were partly used to train stage 2, so they are optimis
 | `https://someuser.github.io/portfolio/` | Legitimate | Phishing | GitHub Pages is user hosting with no reputation; the URL model alone decides |
 | `https://web3.storage` | Legitimate | Suspicious | Unusual ending; borderline URL score |
 | `https://amazon.co.th/` | Legitimate | Suspicious | Low-ranked Amazon country domain, so the brand rule raises it |
-| `http://httpforever.com/` | Legitimate | Suspicious | Plain-HTTP site outside the top 100,000 |
 | `https://bit.ly/3xYzAbC` (dead short link) | Unknown | Suspicious | A short link that leads nowhere cannot be checked |
 
+`http://httpforever.com/` (previously Suspicious) is now shown as Legitimate (checked 20 Oct 2026).
+
+**From the fresh evaluation (section 3.9b, after both fixes):**
+
+| URL | Truth | System shows | Why |
+|---|---|---|---|
+| `https://netto.de/geschaefte/rostock/flasskoppweg-3/c78d...` | Legitimate | Phishing | Long store page with a random ID; no domain age found |
+| `https://apollohealthcareacademy.com/admissions/` | Legitimate | Phishing | Domain about 1 year old and the URL score already Suspicious |
+| `https://mayfairwellness.com.my/tag/english/` | Legitimate | Phishing | Same: young domain plus a Suspicious URL score |
+| `https://abcgil.com/EN/owa/` | Phishing | Legitimate | Fake Outlook page on an old hacked website |
+| `https://itauingreso.com` | Phishing | Legitimate | Brand glued to another word; short brand names must stand alone |
+| `https://roblox-robux-free.com/` | Phishing | Legitimate | Roblox did not meet the brand-list counts |
+| `https://roblox.com.bz/users/.../profile` | Phishing | Legitimate | Domain ranked #130,385, so the page check treats it as well established |
+| `https://ctbncper...misitiohostgator.com/pt/st.html` | Phishing | Legitimate | Hosting company's site-builder domain is ranked (#57,250), so it is treated as an established website |
+| `https://makkanae.freedynamicdns.net/` | Phishing | Legitimate | Dynamic-DNS service; its old domain age lowers the result |
+
 These match the limitations in section 5: brand-list coverage, hacked old websites, shared hosting, and URLs whose page cannot be checked.
+
+## 5b. Decisions taken
+- The allowlist is not grown; machine-learning or data-driven fixes are preferred over hand-made lists.
+- The live page check stays, but has no panel of its own on the result page.
+- A general look-alike measurement (comparing every domain with the top websites) was not adopted.
+- Shared-hosting detection for ranked hosting domains (e.g. `misitiohostgator.com`) was not added in this round.
 
 ## 6. Files
 
@@ -251,20 +292,25 @@ These match the limitations in section 5: brand-list coverage, hacked old websit
 - `notebooks/build_abused_platforms.py` – builds that list from phishing data
 - `notebooks/train_stage2.py` – builds the stage-2 dataset, trains, tunes thresholds, saves the model and metrics
 - `backend/tests/test_page_check.py`, `backend/tests/test_stage2.py`, `backend/tests/viva_url_checks.py`
+- `backend/tests/fresh_eval.py` – builds and runs the fresh evaluation set (section 3.9b)
+- `backend/tests/examiner_style_urls.txt` – 149 examiner-style URLs with labels
 
 **Changed**
 - **Backend:** `allowlist.py`, `brands.py`, `phishing_type.py`, `reputation.py`, `ml_state.py`, `schemas.py`, `routes_user.py`, `routes_extension.py`, `routes_admin.py`, `explanations.py`, `requirements.txt` (adds beautifulsoup4, lxml)
-- **Frontend:** `Scanner.jsx`, `Learn.jsx`, `Logout.jsx`, `index.css`, `index.html`
-- **Extension:** `background.js`, `popup.js`
+- **Frontend:** `Scanner.jsx`, `ShapChart.jsx`, `Learn.jsx`, `Logout.jsx`, `index.css`, `index.html`
+- **Extension:** `background.js`, `toast.js`, `popup.js`
 - **Tests:** `conftest.py`
 
 **Generated data (not in git):**
 - `outputs/stage2_model.joblib`, `outputs/stage2_metrics.json`, `outputs/stage2_set.csv`
 - `outputs/domain_age_cache.json`, `outputs/rdap_bootstrap.json`
 - `phish_feed_live_2026_10_16.csv`
+- `fresh_eval_set.csv`, `outputs/fresh_eval_results.csv` (final run), `outputs/fresh_eval_results_before_fixes.csv`
 
 ---
 
 ## 7. Still to do
 - Update the report (Chapters 3–5: design, implementation, evaluation, testing tables) with these changes.
 - Re-run the full evaluation scripts on all evaluation sets for final report numbers.
+- The two fixes in 3.9b were chosen using the 19 Oct fresh set, so build another fresh set on a later day (`fresh_eval.py build`, then `run`) for the final, untouched numbers.
+- Commit and push the uncommitted changes (sections 3.9a and 3.9b) after testing.
