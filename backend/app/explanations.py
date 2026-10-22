@@ -351,7 +351,7 @@ def _feature_why_matters(feature: str, prediction: str) -> str:
             "Attackers sometimes lengthen URLs with extra subdomains, words, "
             "or parameters to hide the real destination or imitate a trusted "
             "brand — though many legitimate sites also use long URLs, so "
-            "length alone is never treated as proof either way; it's only "
+            "length alone is never treated as proof either way, it's only "
             "one of several signals the model weighs together."
             if p else
             "Most legitimate sites use short, simple URLs, so a typical "
@@ -585,6 +585,37 @@ def _combined_signal_sentence(
     )
 
 
+MODEL_LINE_MARKERS = ("structural signals", "overall structure")
+
+
+def model_signal_line(features: dict, top_contributions: Iterable[dict],
+                      p_phish: float, warning_at: float, rule_decided: bool) -> str:
+    """The URL model's own view for the "Why" text of a result that a rule
+    decided (or whose technique lines filled the list): its own score (the
+    SHAP chart's end value) and the structural signals behind it, so every
+    explanation keeps its model (SHAP) part."""
+    towards = "phishing" if p_phish >= warning_at else "legitimate"
+    clauses: list[str] = []
+    for item in top_contributions:
+        feature, value = item.get("feature"), float(item.get("shap_value", 0.0))
+        if (value > 0) != (towards == "phishing"):
+            continue
+        if value_contradicts(feature, towards, features.get(feature)):
+            continue
+        clause = _feature_clause(feature, towards, features.get(feature))
+        if clause not in clauses:
+            clauses.append(clause)
+        if len(clauses) >= 3:
+            break
+    level = (f"below its {warning_at:.0%} warning level" if towards == "legitimate"
+             else "in its warning range")
+    signals = (f"because of structural signals such as {_english_join(clauses)}" if clauses
+               else "with no single structural signal standing out")
+    tail = (" A rule, not the model's score, decided this result." if rule_decided else "")
+    return (f"The URL model alone scored this address {p_phish:.0%} ({level}) "
+            f"{signals}.{tail}")
+
+
 def _lime_weight_for_feature(feature: str, lime_rules: Iterable[dict]) -> float:
     """Find the LIME rule that references a feature and return its weight."""
     for item in lime_rules:
@@ -658,15 +689,15 @@ def build_evidence(
 # Analysis answers "what attack behaviour is this"; this dict answers "why
 # did that push the AI toward phishing" at a summary level.
 TECHNIQUE_SUMMARY_CLAUSES = {
-    "Brand Impersonation": (
+    "Brand Name on Unrelated Domain": (
         "The domain contains wording associated with a trusted brand that "
         "doesn't match that brand's official domain."
     ),
-    "Typosquatting": (
+    "Typosquatting (Look-alike Spelling)": (
         "Part of the address closely resembles a trusted brand name, a "
         "common typosquatting pattern."
     ),
-    "Credential Harvesting": (
+    "Login / Account Lure Words": (
         "The URL contains account- or verification-related wording often "
         "used to lure users into entering credentials."
     ),
@@ -674,9 +705,17 @@ TECHNIQUE_SUMMARY_CLAUSES = {
         "The URL uses alarming or urgent wording designed to pressure a "
         "quick reaction."
     ),
-    "Malware Delivery": (
+    "Malicious Download Link": (
         "The URL references downloading or installing software, a common "
         "malware-delivery pattern."
+    ),
+    "Payment / Banking Lure Words": (
+        "The URL uses payment or banking wording often used to make a "
+        "fake billing or bank page look genuine."
+    ),
+    "Prize / Reward Lure Words": (
+        "The URL promises a prize, reward or free item, a common lure to "
+        "collect personal details or a fake fee."
     ),
     "URL Obfuscation": (
         "Parts of the address are obscured in a way that can hide its real "

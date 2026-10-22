@@ -17,13 +17,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     const scan = store.lastScan;
     const isPhishing = scan.prediction === "phishing";
     const isUncertain = scan.prediction === "uncertain";
-    // A rule after the model decided the verdict (domain reputation / HTTPS
-    // check), so the raw score is a URL-pattern score, not a probability of
-    // the verdict shown.
-    const overridden = ["reputable_domain", "https_only", "brand_impersonation", "short_link", "new_domain",
-        "established_domain"].includes(scan.uncertain_reason)
-        || ["http_reputable", "reputable_site", "page_check", "established_domain"].includes(scan.legit_reason)
-        || ["brand_impersonation", "page_check", "new_domain"].includes(scan.escalated_by);
+    // The score on one scale for every verdict, always in the verdict's
+    // band (backend score_view.py).
+    const score = scan.score || {};
     const statusBadgeClass = isPhishing ? "danger" : isUncertain ? "risk-medium" : "safe";
     const statusText = isPhishing ? "PHISHING" : isUncertain ? "SUSPICIOUS" : "SAFE";
     const attack = scan.attack_type || {};
@@ -50,14 +46,14 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </span>
             </span>
         </div>
-        ${overridden ? "" : `
+        ${score.confidence == null ? "" : `
         <div class="pg-row">
             <span class="pg-label">Confidence</span>
-            <span class="pg-value">${pgPct(scan.confidence)}</span>
+            <span class="pg-value">${pgPct(score.confidence)}</span>
         </div>`}
         <div class="pg-row">
-            <span class="pg-label">${overridden ? "URL Pattern Score" : "Phishing Probability"}</span>
-            <span class="pg-value">${pgPct(scan.phishing_probability)}</span>
+            <span class="pg-label">Score</span>
+            <span class="pg-value">${pgPct(score.risk_score)}</span>
         </div>
         ${isPhishing ? `
         <div class="pg-row">

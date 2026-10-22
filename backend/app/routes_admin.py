@@ -34,6 +34,7 @@ from .routes_user import (
 from .schemas import (
     AdminCreateUser, AdminUserUpdate, DetectionWithUser, URLRequest, UserOut,
 )
+from .score_view import VERDICT_KEY, shown_score, verdict_counts
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -85,8 +86,10 @@ def dashboard(
         v_query = v_query.filter(Detection.source.in_(("website", "extension")))
     v_rows = v_query.all()
 
-    v_phishing = sum(1 for r in v_rows if r.label == 1)
-    v_legitimate = len(v_rows) - v_phishing
+    # Counted by the verdict users were shown (Detection.prediction), not
+    # the URL model's raw label: a rule can raise or lower the model's call.
+    v_counts = verdict_counts(r.prediction for r in v_rows)
+    v_phishing, v_suspicious, v_legitimate = v_counts["phishing"], v_counts["suspicious"], v_counts["legitimate"]
     v_active_users = len({r.user_id for r in v_rows if r.user_id is not None})
     v_extension_detections = sum(1 for r in v_rows if r.source == "extension")
     source_distribution = _source_distribution([r.source for r in v_rows])
@@ -118,22 +121,22 @@ def dashboard(
     # a stored column, since brand impersonation is a lightweight lookup
     # (see phishing_type.detect_brand) not persisted on the Detection row.
     brand_counts = Counter(
-        b for r in v_rows if r.label == 1 and (b := detect_brand(r.url))
+        b for r in v_rows if r.prediction == "phishing" and (b := detect_brand(r.url))
     )
     most_targeted_brand = brand_counts.most_common(1)[0][0] if brand_counts else None
 
     v_trend_map = {}
     for r in v_rows:
         day = r.created_at.date().isoformat()
-        bucket = v_trend_map.setdefault(day, {"phishing": 0, "legitimate": 0})
-        bucket["phishing" if r.label == 1 else "legitimate"] += 1
+        bucket = v_trend_map.setdefault(day, {"phishing": 0, "suspicious": 0, "legitimate": 0})
+        bucket[VERDICT_KEY.get(r.prediction, "legitimate")] += 1
     v_trend = [{"day": day, **counts} for day, counts in sorted(v_trend_map.items())]
 
     visuals = {
         "date_from": v_since.date().isoformat(),
         "date_to": (v_until - timedelta(days=1)).date().isoformat(),
         "trend": v_trend,
-        "result_counts": {"phishing": v_phishing, "legitimate": v_legitimate},
+        "result_counts": {"phishing": v_phishing, "suspicious": v_suspicious, "legitimate": v_legitimate},
         "feature_distribution": _feature_distribution([r.url for r in v_rows]),
         "attack_category_frequency": attack_category_frequency,
         "source_distribution": source_distribution,
@@ -144,6 +147,7 @@ def dashboard(
             "users": v_active_users,
             "scans": len(v_rows),
             "phishing": v_phishing,
+            "suspicious": v_suspicious,
             "legitimate": v_legitimate,
             "extension_detections": v_extension_detections,
         },
@@ -177,7 +181,7 @@ def extension_monitoring(
 
     total_extension_users = base.with_entities(Detection.user_id).distinct().count()
     extension_detection_count = base.count()
-    threats_found = base.filter(Detection.label == 1).count()
+    threats_found = base.filter(Detection.prediction == "phishing").count()
 
     # Intentionally no trend/attack-category charts here - those already
     # live on the Admin Dashboard (filterable by source=extension) and on
@@ -246,8 +250,7 @@ def _filtered_detections_query(
     """Shared filter-building logic for the detection log listing, its
     analytics summary, and its CSV/PDF export - so all three always agree
     on what "the current filters" means. own_user_id: the "My Scans" tab -
-    only that admin's own scans, from every source including the Admin
-    Scanner."""
+    only that admin's own Website Scanner and Chrome Extension scans."""
     query = db.query(Detection, User).join(User, User.id == Detection.user_id)
     if q:
         query = query.filter(
@@ -259,11 +262,13 @@ def _filtered_detections_query(
         query = query.filter(Detection.risk_level == risk)
     if attack_type:
         query = query.filter(Detection.attack_type == attack_type)
-    # Every scan is listed, including admins' own Admin Scanner scans
-    # (source="admin"); the Admin Dashboard statistics still leave those out.
+    # Only the two user-facing sources (Website Scanner, Chrome Extension)
+    # are listed, like the Admin Dashboard; Admin Scanner test scans
+    # (source="admin") are saved but not listed.
+    query = query.filter(Detection.source.in_(("website", "extension")))
     if own_user_id is not None:
         query = query.filter(Detection.user_id == own_user_id)
-    if source in ("website", "extension", "admin"):
+    if source in ("website", "extension"):
         query = query.filter(Detection.source == source)
 
     start, end = _date_range_bounds(date_from, date_to)
@@ -278,17 +283,19 @@ def _detection_analytics_summary(rows: list) -> dict:
     """rows: list of (Detection, User) tuples already matching the current
     filters. Powers the Detection Logs 'Analysis Summary' panel."""
     total = len(rows)
-    phishing = sum(1 for d, _ in rows if d.label == 1)
-    legitimate = total - phishing
+    counts = verdict_counts(d.prediction for d, _ in rows)
+    phishing, suspicious, legitimate = counts["phishing"], counts["suspicious"], counts["legitimate"]
     detection_rate = round(phishing / total * 100, 1) if total else 0.0
-    avg_confidence = (
-        round(sum(d.confidence for d, _ in rows) / total * 100, 1) if total else 0.0
-    )
+    # The confidence each record's page showed (none for Suspicious or
+    # rule-decided results, see score_view.py).
+    shown = [c for c in (shown_score(d)[1] for d, _ in rows) if c is not None]
+    avg_confidence = round(sum(shown) / len(shown) * 100, 1) if shown else 0.0
     attack_counts = Counter(d.attack_type for d, _ in rows if d.attack_type)
     most_common_attack_type = attack_counts.most_common(1)[0][0] if attack_counts else None
     return {
         "total_detections": total,
         "phishing_count": phishing,
+        "suspicious_count": suspicious,
         "legitimate_count": legitimate,
         "detection_rate_pct": detection_rate,
         "most_common_attack_type": most_common_attack_type,
@@ -306,7 +313,7 @@ def all_detections(
     attack_type: Optional[str] = None,
     date_from: Optional[str] = None,       # "YYYY-MM-DD"
     date_to: Optional[str] = None,
-    source: Optional[str] = None,          # "website" | "extension" (| "admin" with mine)
+    source: Optional[str] = None,          # "website" | "extension"
     mine: bool = False,                    # "My Scans" tab: this admin's own scans
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
@@ -336,6 +343,8 @@ def all_detections(
                 created_at=d.created_at,
                 ip_address=d.ip_address,
                 source=d.source,
+                risk_score=d.risk_score,
+                score_confidence=d.score_confidence,
                 user_email=u.email,
                 user_name=u.full_name,
             )
@@ -394,17 +403,19 @@ def export_detections(
 
     filename_base = f"{datetime.now(timezone.utc):%B}_Detection_Report"
 
-    headers = ["URL", "Result", "Risk", "Attack Type", "Detection Source", "Date", "Confidence"]
+    headers = ["URL", "Result", "Risk", "Attack Type", "Detection Source", "Date", "Score", "Confidence"]
 
     def _row_values(d: Detection, u: User):
+        score, confidence = shown_score(d)
         return [
             d.url,
-            d.prediction,
+            "suspicious" if d.prediction == "uncertain" else d.prediction,
             d.risk_level,
             d.attack_type or "-",
             _SOURCE_LABELS.get(d.source, d.source),
             d.created_at.strftime("%Y-%m-%d %H:%M"),
-            f"{d.confidence * 100:.1f}%",
+            f"{score * 100:.1f}%" if score is not None else "-",
+            f"{confidence * 100:.1f}%" if confidence is not None else "-",
         ]
 
     if format == "csv":

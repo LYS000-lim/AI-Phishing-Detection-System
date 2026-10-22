@@ -55,6 +55,10 @@ class Detection(Base):
     label = Column(Integer, nullable=False)           # 0 = Legit, 1 = Phish
     confidence = Column(Float, nullable=False)        # 0..1 confidence in prediction
     phishing_probability = Column(Float, nullable=False)
+    # The score and confidence the result page showed (score_view.py, always
+    # in the verdict's band); null for records saved before 2026-10-21.
+    risk_score = Column(Float, nullable=True)
+    score_confidence = Column(Float, nullable=True)
     risk_level = Column(String(8), nullable=False)    # "Low" | "Medium" | "High"
     model_used = Column(String(64), nullable=False)   # e.g. "RandomForest"
     attack_type = Column(String(64), nullable=True)   # e.g. "Credential Theft"; null for legitimate

@@ -29,7 +29,7 @@ import numpy as np
 
 from . import domain_age
 
-LOOKUP_BUDGET = 3.0
+LOOKUP_BUDGET = 6.0
 _PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "outputs", "stage2_model.joblib")
 _bundle = None
 _lock = threading.Lock()

@@ -39,6 +39,19 @@ def init_db() -> None:
     _ensure_extension_reports_user_column()
     _ensure_reported_urls_review_columns()
     _ensure_block_detail_columns()
+    _ensure_detections_score_columns()
+
+
+def _ensure_detections_score_columns() -> None:
+    """Same self-heal, for Detection.risk_score / score_confidence."""
+    if not DB_URL.startswith("sqlite"):
+        return
+    with engine.connect() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(detections)")}
+        for name in ("risk_score", "score_confidence"):
+            if cols and name not in cols:
+                conn.exec_driver_sql(f"ALTER TABLE detections ADD COLUMN {name} FLOAT")
+                conn.commit()
 
 
 def _ensure_detections_attack_type_column() -> None:

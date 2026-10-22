@@ -228,6 +228,11 @@
     color: white;
 }
 
+#pg-retry {
+    background: #374151;
+    color: white;
+}
+
 .pg-blocked-banner {
     background: #450a0a;
     border: 1px solid #ff3b3b;
@@ -497,4 +502,42 @@ body {
 
 .pg-footer-note {
     margin-top: 18px;
+}
+
+/* Suspicious result page: the Phishing warning's layout, amber instead of red. */
+.pg-card.pg-caution {
+    box-shadow: 0 0 40px rgba(245, 158, 11, 0.4);
+}
+.pg-card.pg-caution h1 {
+    color: #fbbf24;
+}
+.pg-card.pg-caution .pg-recommendation {
+    background: #422006;
+    border-left-color: #f59e0b;
+    color: #fde68a;
+}
+/* Kept after .pg-recommendation so the neutral note stays blue. */
+.pg-card.pg-neutral .pg-neutral-note {
+    background: #0c2a3d;
+    border-left-color: #38bdf8;
+    color: #bae6fd;
+}
+
+#pg-skip {
+    background: #374151;
+    color: white;
+}
+
+/* Checking page */
+.pg-spinner {
+    width: 44px;
+    height: 44px;
+    margin: 20px auto;
+    border: 4px solid rgba(56, 189, 248, 0.25);
+    border-top-color: #38bdf8;
+    border-radius: 50%;
+    animation: pg-spin 0.9s linear infinite;
+}
+@keyframes pg-spin {
+    to { transform: rotate(360deg); }
 }

@@ -62,6 +62,7 @@ export default function AdminDashboard() {
           <div className="tile"><div className="v">{totals.users}</div><div className="k">Active Users</div></div>
           <div className="tile"><div className="v">{totals.scans}</div><div className="k">Total Scans</div></div>
           <div className="tile"><div className="v" style={{ color: 'var(--bad)' }}>{totals.phishing}</div><div className="k">Phishing Detection</div></div>
+          <div className="tile"><div className="v" style={{ color: 'var(--warn)' }}>{totals.suspicious}</div><div className="k">Suspicious Detection</div></div>
           <div className="tile"><div className="v" style={{ color: 'var(--good)' }}>{totals.legitimate}</div><div className="k">Legitimate Detection</div></div>
           <div className="tile"><div className="v" style={{ color: 'var(--accent)' }}>{totals.extension_detections}</div><div className="k">Extension Detection</div></div>
         </div>
@@ -96,6 +97,7 @@ export default function AdminDashboard() {
               { label: 'Active Users', value: totals.users },
               { label: 'Total Scans', value: totals.scans },
               { label: 'Phishing Detection', value: totals.phishing },
+              { label: 'Suspicious Detection', value: totals.suspicious },
               { label: 'Legitimate Detection', value: totals.legitimate },
               { label: 'Extension Detection', value: totals.extension_detections },
             ],

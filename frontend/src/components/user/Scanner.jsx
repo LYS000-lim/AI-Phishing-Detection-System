@@ -191,6 +191,8 @@ const RECOMMENDATIONS = {
   'Financial Scam': 'Do not enter any payment or banking information.',
   'Fake Giveaway / Scam': 'Do not provide personal information or make any payment.',
   'Tech Support / Malware Scam': 'Do not download or install anything from this site, and do not call any phone number shown.',
+  'Brand Impersonation': "Verify you are on the brand's official domain before entering any information.",
+  // Name used before 2026-10-21; kept for older history records.
   'Domain Spoofing / Brand Impersonation': "Verify you are on the brand's official domain before entering any information.",
 }
 const recommendationFor = (category) =>
@@ -303,22 +305,15 @@ export default function Scanner({ scanFn = scanURL }) {
     && (result.uncertain_reason === 'new_domain' || result.escalated_by === 'new_domain')
   const isEstablished = Boolean(result) && !isTrusted
     && (result.uncertain_reason === 'established_domain' || result.legit_reason === 'established_domain')
-  // Display only (verdict and saved values unchanged): when the domain-age
-  // model's level is the final result, its combined probability is shown, so
-  // the percentage always agrees with the verdict. Otherwise the URL model's
-  // probability is shown as before.
-  const useCombined = Boolean(stage2) && !isTrusted && stage2.level === result?.prediction
-  const shownP = useCombined ? stage2.p : result?.phishing_probability
-  const shownConfidence = useCombined ? Math.max(stage2.p, 1 - stage2.p) : result?.confidence
-  const belowWarning = !useCombined && result?.prediction === 'legitimate' && (result?.phishing_probability ?? 0) >= 0.5
+  // The score shown, on one scale for every verdict path (backend
+  // score_view.py), always in the verdict's band.
+  const score = result?.score || explain?.score
+  const ruleDecided = score?.source === 'rule'
   const isShortLink = isUncertain && result.uncertain_reason === 'short_link'
   // What kept a warning on a well-established domain (login wording, another
   // brand's name, a link to another website, a user@ prefix).
   const lures = result?.lures || []
-  // A rule after the model decided the verdict, so the raw model score is
-  // a URL-pattern score, not the probability of the final verdict.
-  const isOverridden = isReputable || isHttpsOnly || isHttpReputable || isBrand || isBrandEscalated
-    || isReputableSite || isShortLink || isPageLegit || isPageEscalated || isNewDomain || isEstablished
+  // What the rule that decided the verdict found (shown when ruleDecided).
   const overrideNote = (isBrand || isBrandEscalated) && result?.lookalike
     ? `Verdict raised: "${result.lookalike}" imitates "${result.brand}" on a domain that is not the brand's own`
     : isBrand || isBrandEscalated
@@ -411,7 +406,9 @@ export default function Scanner({ scanFn = scanURL }) {
               <div className="result-url mono">{result.url}</div>
               {result.checked_url && (
                 <div className="result-redirect">
-                  Redirect link – the result is for the address it opens:{' '}
+                  {result.unicode_host
+                    ? 'Written with special Unicode letters – browsers open it as:'
+                    : 'Redirect link – the result is for the address it opens:'}{' '}
                   <span className="mono">{result.checked_url}</span>
                 </div>
               )}
@@ -435,40 +432,26 @@ export default function Scanner({ scanFn = scanURL }) {
             </div>
           ) : (
             <div className="result-metrics">
-              {isOverridden && !useCombined ? (
-                <div className="metric-card">
-                  <span className="metric-label">URL Pattern Score</span>
-                  <strong>{pct(result.phishing_probability)}</strong>
-                  <span className="metric-sub">{overrideNote}</span>
-                </div>
-              ) : (
-                <>
-                  <div className="metric-card">
-                    <span className="metric-label">Phishing Probability</span>
-                    <strong>{pct(shownP)}</strong>
-                  </div>
-                  <div className="metric-card">
-                    <span className="metric-label">Legitimate Probability</span>
-                    <strong>{pct(1 - Math.round(shownP * 1000) / 1000)}</strong>
-                  </div>
-                </>
-              )}
+              <div className="metric-card">
+                <span className="metric-label">Score</span>
+                <strong>{pct(score?.risk_score)}</strong>
+                {ruleDecided && <span className="metric-sub">{overrideNote}</span>}
+              </div>
               <div className="metric-card">
                 <span className="metric-label">Model Used</span>
                 <strong>{result.model_used}</strong>
               </div>
               <div className="metric-card">
                 <span className="metric-label">Confidence</span>
-                <strong>{confidenceInfo(shownConfidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by, result.lookalike).label}</strong>
-                {(!isOverridden || useCombined) && <span className="metric-sub">{pct(shownConfidence)}</span>}
+                <strong>{confidenceInfo(score?.confidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by, result.lookalike).label}</strong>
+                {score?.confidence != null && <span className="metric-sub">{pct(score.confidence)}</span>}
               </div>
             </div>
           )}
 
           {!isTrusted && (
             <p className="confidence-note">
-              {confidenceInfo(shownConfidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by, result.lookalike).text}
-              {belowWarning && ' Warning level: Suspicious from 73%, Phishing from 89% – this URL scored below it.'}
+              {confidenceInfo(score?.confidence, result.prediction, result.uncertain_reason, result.legit_reason, result.escalated_by, result.lookalike).text}
             </p>
           )}
 
@@ -554,7 +537,7 @@ export default function Scanner({ scanFn = scanURL }) {
                   ) : (
                   <div>
                     The AI model is not certain about this URL
-                    {isBorderline ? ` (${pct(result.phishing_probability)} phishing score)` : ''}.{' '}
+                    {isBorderline ? ` (${pct(score?.risk_score)} risk score)` : ''}.{' '}
                     {isBorderline
                       ? 'Some URL characteristics resemble phishing, but not strongly enough to confirm it.'
                       : 'It was flagged mainly because the site does not use a secure HTTPS connection.'}
@@ -609,8 +592,8 @@ export default function Scanner({ scanFn = scanURL }) {
                 URL Pattern Analysis
               </div>
               <p>
-                The URL structure does not contain suspicious characteristics
-                commonly observed in phishing websites.
+                Not run: the domain is on the trusted list, so the URL model,
+                the domain-age check and the live page check were not needed.
               </p>
             </div>
           </section>
@@ -656,8 +639,12 @@ export default function Scanner({ scanFn = scanURL }) {
             <h3>Why was this detected?</h3>
             <p className="section-intro">
               This URL was classified as <strong>PHISHING</strong> with{' '}
-              <strong>{result.risk_level.toLowerCase()} risk</strong> because several
-              characteristics matched patterns commonly found in phishing websites.
+              <strong>{result.risk_level.toLowerCase()} risk</strong>{' '}
+              {ruleDecided
+                ? `by the ${score.decided_by.charAt(0).toLowerCase()}${score.decided_by.slice(1)}. The ML model's own view of the address is listed with the other findings below.`
+                : score?.source === 'domain_age'
+                ? "because its URL pattern together with its domain's age falls in the phishing range."
+                : 'because several characteristics matched patterns commonly found in phishing websites.'}
             </p>
 
             <p className="reason-lead">The AI identified:</p>
@@ -682,7 +669,7 @@ export default function Scanner({ scanFn = scanURL }) {
           <ShapChart
             explain={explain}
             formatValue={formatDetectedValue}
-            overrideNote={isOverridden ? `These are model scores only. The final verdict above also depends on a rule (${overrideNote.charAt(0).toLowerCase()}${overrideNote.slice(1)}).` : null}
+            overrideNote={ruleDecided ? `These are model scores only. The final verdict above also depends on a rule (${overrideNote.charAt(0).toLowerCase()}${overrideNote.slice(1)}).` : null}
           />
 
           <section className="panel result-section">
@@ -784,7 +771,7 @@ export default function Scanner({ scanFn = scanURL }) {
           <ShapChart
             explain={explain}
             formatValue={formatDetectedValue}
-            overrideNote={isOverridden ? `These are model scores only. The final verdict above also depends on a rule (${overrideNote.charAt(0).toLowerCase()}${overrideNote.slice(1)}).` : null}
+            overrideNote={ruleDecided ? `These are model scores only. The final verdict above also depends on a rule (${overrideNote.charAt(0).toLowerCase()}${overrideNote.slice(1)}).` : null}
           />
 
           <section className="panel result-section">
@@ -892,7 +879,7 @@ export default function Scanner({ scanFn = scanURL }) {
           <ShapChart
             explain={explain}
             formatValue={formatDetectedValue}
-            overrideNote={isOverridden ? `These are model scores only. The final verdict above also depends on a rule (${overrideNote.charAt(0).toLowerCase()}${overrideNote.slice(1)}).` : null}
+            overrideNote={ruleDecided ? `These are model scores only. The final verdict above also depends on a rule (${overrideNote.charAt(0).toLowerCase()}${overrideNote.slice(1)}).` : null}
           />
 
           <section className="panel result-section">

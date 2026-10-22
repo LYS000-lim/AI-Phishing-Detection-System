@@ -188,6 +188,8 @@ def fetch(url: str) -> dict:
         out["error"] = f"not opened: {exc}"
     except ConnectionError as exc:
         out["error"] = str(exc)
+    except httpx.InvalidURL:
+        out["error"] = "the address could not be opened by the checker (its domain name is not valid)"
     except httpx.TimeoutException:
         out["error"] = "the page took too long to respond"
     except httpx.HTTPError as exc:

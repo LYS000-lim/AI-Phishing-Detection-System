@@ -90,6 +90,10 @@ export default function UserDashboard() {
             <div className="k">Threats Detected</div>
           </div>
           <div className="tile">
+            <div className="v" style={{ color: 'var(--warn)' }}>{totals.suspicious}</div>
+            <div className="k">Suspicious Websites</div>
+          </div>
+          <div className="tile">
             <div className="v" style={{ color: 'var(--good)' }}>{totals.legitimate}</div>
             <div className="k">Safe Websites</div>
           </div>

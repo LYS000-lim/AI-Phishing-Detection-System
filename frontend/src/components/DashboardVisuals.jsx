@@ -249,6 +249,7 @@ const DashboardVisuals = forwardRef(function DashboardVisuals({
     labels: trend.map((d) => d.day),
     datasets: [
       { label: 'Phishing', data: trend.map((d) => d.phishing), borderColor: c.bad, backgroundColor: 'rgba(239,68,68,.2)', tension: .3 },
+      { label: 'Suspicious', data: trend.map((d) => d.suspicious ?? 0), borderColor: c.warn, backgroundColor: 'rgba(245,158,11,.2)', tension: .3 },
       { label: 'Legitimate', data: trend.map((d) => d.legitimate), borderColor: c.good, backgroundColor: 'rgba(16,185,129,.2)', tension: .3 },
     ],
   }
@@ -261,13 +262,16 @@ const DashboardVisuals = forwardRef(function DashboardVisuals({
     },
   }
 
-  const result = visuals?.result_counts || { phishing: 0, legitimate: 0 }
-  const resultTotal = result.phishing + result.legitimate
-  const phishPct = resultTotal ? Math.round((result.phishing / resultTotal) * 100) : 0
-  const legitPct = resultTotal ? 100 - phishPct : 0
+  // Counts of the verdicts users were shown (Phishing / Suspicious / Legitimate).
+  const result = { phishing: 0, suspicious: 0, legitimate: 0, ...(visuals?.result_counts || {}) }
+  const resultTotal = result.phishing + result.suspicious + result.legitimate
+  const share = (n) => (resultTotal ? Math.round((n / resultTotal) * 100) : 0)
+  const phishPct = share(result.phishing)
+  const suspPct = share(result.suspicious)
+  const legitPct = resultTotal ? 100 - phishPct - suspPct : 0
   const pieData = {
-    labels: [`Phishing (${phishPct}%)`, `Legitimate (${legitPct}%)`],
-    datasets: [{ data: [result.phishing, result.legitimate], backgroundColor: [c.bad, c.good], borderWidth: 0 }],
+    labels: [`Phishing (${phishPct}%)`, `Suspicious (${suspPct}%)`, `Legitimate (${legitPct}%)`],
+    datasets: [{ data: [result.phishing, result.suspicious, result.legitimate], backgroundColor: [c.bad, c.warn, c.good], borderWidth: 0 }],
   }
 
   const dist = visuals?.feature_distribution || {}
@@ -323,11 +327,11 @@ const DashboardVisuals = forwardRef(function DashboardVisuals({
   const downloadAll = () => downloadAllCharts([
     {
       ref: trendRef, title: `Threat Trend (${rangeLabel})`,
-      description: 'Daily count of phishing vs. legitimate URLs detected across all sources during the selected period.',
+      description: 'Daily count of phishing, suspicious and legitimate results across all sources during the selected period.',
     },
     {
       ref: pieRef, title: 'Detection Result Overview',
-      description: 'Displays the proportion of phishing and legitimate URL classifications detected by the system.',
+      description: 'Displays the proportion of phishing, suspicious and legitimate results shown by the system.',
     },
     {
       ref: distRef, title: 'Important URL Characteristics',
@@ -349,7 +353,7 @@ const DashboardVisuals = forwardRef(function DashboardVisuals({
       <section className="panel">
         <h3>Threat Trend ({rangeLabel})</h3>
         <p className="xai-note" style={{ marginTop: 0 }}>
-          Daily count of phishing vs. legitimate URLs detected across all sources during the selected period.
+          Daily count of phishing, suspicious and legitimate results across all sources during the selected period.
         </p>
         {loading ? (
           <p className="empty">Loading…</p>
@@ -364,7 +368,7 @@ const DashboardVisuals = forwardRef(function DashboardVisuals({
         <section className="panel">
           <h3>Detection Result Overview</h3>
           <p className="xai-note" style={{ marginTop: 0 }}>
-            Displays the proportion of phishing and legitimate URL classifications detected by the system.
+            Displays the proportion of phishing, suspicious and legitimate results shown by the system.
           </p>
           {resultTotal > 0
             ? <Doughnut ref={pieRef} data={pieData} options={{ plugins: { legend: { position: 'bottom', labels: { color: c.text } } } }} />

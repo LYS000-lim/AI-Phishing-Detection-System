@@ -85,7 +85,7 @@ export default function UserHistory() {
                   <th>Verdict</th>
                   <th>Risk</th>
                   <th>Model</th>
-                  <th>Confidence</th>
+                  <th>Score</th>
                 </tr>
               </thead>
               <tbody>
@@ -104,7 +104,7 @@ export default function UserHistory() {
                       </span>
                     </td>
                     <td className="mono">{h.model_used}</td>
-                    <td>{(h.confidence * 100).toFixed(1)}%</td>
+                    <td>{(h.risk_score * 100).toFixed(1)}%</td>
                   </tr>
                 ))}
               </tbody>

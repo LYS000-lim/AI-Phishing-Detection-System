@@ -18,9 +18,8 @@ const shortReason = (reason) => {
 
 // Same labels the detector assigns (backend/app/phishing_type.py).
 const ATTACK_TYPES = [
-  'Credential Harvesting', 'Credential Theft', 'Brand Impersonation',
-  'Domain Spoofing / Brand Impersonation', 'Financial Scam', 'Fake Giveaway / Scam',
-  'Fake Security Alert', 'Tech Support / Malware Scam', 'Malware Delivery', 'Other',
+  'Credential Theft', 'Brand Impersonation', 'Financial Scam', 'Fake Giveaway / Scam',
+  'Tech Support / Malware Scam', 'General Phishing', 'Other',
 ]
 
 export default function AdminBlacklist() {

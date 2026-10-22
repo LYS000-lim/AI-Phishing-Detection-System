@@ -13,7 +13,7 @@ from .allowlist import is_trusted, unwrap_redirect
 from .database import get_db
 from .explanations import (
     _english_join, _feature_clause, _technique_summary_bullets, build_evidence,
-    build_reason_bullets, plain_text_explanation, risk_level,
+    build_reason_bullets, MODEL_LINE_MARKERS, model_signal_line, plain_text_explanation, risk_level,
 )
 from .features import FEATURE_ORDER, extract_features
 from .ml_state import (
@@ -30,6 +30,7 @@ from .schemas import (
 from .phishing_type import detect_phishing_type
 from .pipeline import evaluate
 from .stage2 import describe_age
+from .score_view import TRUSTED_SCORE, VERDICT_KEY, verdict_counts
 
 router = APIRouter(tags=["user"])
 
@@ -41,23 +42,34 @@ _URL_REASON = {
 }
 
 
-def _age_note(s2: dict) -> str:
+def _age_note(s2: dict, prediction: str = "legitimate") -> str:
+    """What the domain's age means for this verdict. An old domain on a
+    Phishing result must not read as a reason the site is safe."""
     if s2["age_days"] < 365:
-        return ("New domains are common for phishing: most phishing domains are bought days "
-                "or weeks before an attack and abandoned soon after.")
+        return ("New domains are common for phishing, because most phishing domains are bought "
+                "days or weeks before an attack and abandoned soon after.")
+    if prediction == "phishing":
+        return ("An older domain does not make a website safe. Attackers also use hacked or "
+                "long-held domains, and here the address itself shows strong phishing signs, "
+                "so the age was not enough to clear it.")
+    if prediction == "uncertain":
+        return ("Phishing domains are usually only days or weeks old and this one is older, "
+                "which lowers the risk but does not clear the warning signs in the address.")
     if s2["age_days"] < 5 * 365:
-        return "Phishing domains are usually only days or weeks old; this one is older."
-    return "Phishing domains are rarely kept this long; most are bought days or weeks before an attack."
+        return ("Phishing domains are usually only days or weeks old and this one is older, "
+                "which supports the legitimate result.")
+    return ("Phishing domains are rarely kept this long, because most are bought days or "
+            "weeks before an attack, so the age supports the legitimate result.")
 
 
-def _age_line(verdict: dict, url: str) -> str:
+def _age_line(verdict: dict, url: str, prediction: str = "legitimate") -> str:
     """The domain-age point of the "Why" text: the registration date, or why
     there is none (shortener links are explained by their own rule)."""
     from .reputation import is_user_content_host
     s2, rep = verdict["stage2"], verdict.get("reputation") or {}
     if s2:
         line = (f"Domain age — {s2['domain']} was registered {describe_age(s2['age_days'])} "
-                f"({s2['registered']}). {_age_note(s2)}")
+                f"({s2['registered']}). {_age_note(s2, prediction)}")
         if s2.get("changed") == "raised":
             line += " This raised the result above what the address alone gave."
         elif s2.get("changed") == "lowered":
@@ -73,9 +85,13 @@ def _age_line(verdict: dict, url: str) -> str:
             "could not be found, so the domain's age was not used.")
 
 
-def _phishing_page_lines(page) -> list:
-    """The live page check's part of the "Why" text for a Phishing result."""
+def _page_lines(page, prediction: str) -> list:
+    """The live page check's part of the "Why" text, for every verdict:
+    what it found, or why it was not run or could not open the page."""
     if page is None:
+        if prediction == "legitimate":
+            return ["Live page check — not run, because the address already looked legitimate, "
+                    "so the result is based on the address only."]
         return ["Live page check — not run, so the result is based on the address only."]
     risks = [s["text"] for s in page["signals"] if s["kind"] == "risk"]
     if risks:
@@ -84,11 +100,16 @@ def _phishing_page_lines(page) -> list:
         info = next((s["text"] for s in page["signals"] if s["kind"] == "info"), "")
         return [f"Live page check — {info or 'the page could not be opened.'} "
                 "The result is based on the address only."]
-    return ["Live page check — the page was opened and showed no extra phishing behaviour, "
-            "so the result rests on the address."]
+    if prediction == "phishing":
+        return ["Live page check — the page opened but showed no extra sign such as a password "
+                "form sending data to another server. This does not clear it, because phishing "
+                "pages often hide their content from automated checks, so the verdict comes from "
+                "the address signals above."]
+    return ["Live page check — the page opened and showed no sign such as a password form "
+            "sending data to another server, so it did not change the result."]
 
 
-def _age_card(s2: dict) -> dict:
+def _age_card(s2: dict, prediction: str = "legitimate") -> dict:
     """Evidence card for the domain-age check (red when it raised the
     result, green when it lowered it)."""
     raised = s2.get("changed") == "raised" or s2["age_days"] < 365
@@ -99,7 +120,7 @@ def _age_card(s2: dict) -> dict:
         "shap_contribution": 1 if raised else -1,
         "lime_contribution": 0,
         "found": f"The domain {s2['domain']} was registered {describe_age(s2['age_days'])}.",
-        "why_it_matters": _age_note(s2),
+        "why_it_matters": _age_note(s2, prediction),
         "support": ("Raised the result (domain-age check)" if raised
                     else "Lowered the result (domain-age check)"),
     }
@@ -148,6 +169,8 @@ def _predict_and_log(
             model_used="TrustedAllowlist",
             ip_address=ip,
             source=source,
+            risk_score=0.0,
+            score_confidence=1.0,
         )
         db.add(record)
         db.commit()
@@ -156,9 +179,11 @@ def _predict_and_log(
             "id": record.id,
             "url": url,
             "checked_url": checked_url,
+            "unicode_host": result["unicode_host"],
             "prediction": "legitimate",
             "label": 0,
             "confidence": 1.0,
+            "score": TRUSTED_SCORE,
             "phishing_probability": 0.0,
             "legitimate_probability": 1.0,
             "risk_level": "Low",
@@ -198,6 +223,8 @@ def _predict_and_log(
         attack_type=attack_type["category"] if attack_type else None,
         ip_address=ip,
         source=source,
+        risk_score=verdict["score"]["risk_score"],
+        score_confidence=verdict["score"]["confidence"],
     )
     db.add(record)
     db.commit()
@@ -207,6 +234,7 @@ def _predict_and_log(
         "id": record.id,
         "url": url,
         "checked_url": checked_url,
+        "unicode_host": result["unicode_host"],
         "prediction": prediction,
         "label": label,
         "confidence": round(confidence, 4),
@@ -224,6 +252,7 @@ def _predict_and_log(
         "page_check": verdict["page_check"],
         "stage2": verdict["stage2"],
         "reputation": verdict["reputation"],
+        "score": verdict["score"],
         "features": features,
         "attack_type": attack_type,
         "created_at": record.created_at.isoformat(),
@@ -278,11 +307,18 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
     except Exception as exc:
         raise HTTPException(422, f"Could not process URL: {exc}")
     url, checked_url = result["checked"], result["checked_url"]
-    redirect_note = (
-        [f"This link is a redirect: it opens {urlparse(url).hostname}, so the result is "
-         "for that website."]
-        if checked_url else []
-    )
+    if result["unicode_host"]:
+        redirect_note = [
+            f"The address is written with special Unicode letters "
+            f"({urlparse(req.url).hostname}). Browsers open it as {urlparse(url).hostname}, "
+            "so the result is for that website."
+        ]
+    else:
+        redirect_note = (
+            [f"This link is a redirect: it opens {urlparse(url).hostname}, so the result is "
+             "for that website."]
+            if checked_url else []
+        )
 
     # Trusted-domain results are decided by reputation verification, not by
     # the ML model. Return a dedicated explanation state with no SHAP/LIME.
@@ -291,9 +327,11 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         return {
             "url": req.url,
             "checked_url": checked_url,
+            "unicode_host": result["unicode_host"],
             "prediction": "legitimate",
             "risk_level": "Low",
             "confidence": 1.0,
+            "score": TRUSTED_SCORE,
             "phishing_probability": 0.0,
             "legitimate_probability": 1.0,
             "model_used": "TrustedAllowlist",
@@ -307,6 +345,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             "why_detected": redirect_note + [
                 f"The official domain '{domain}' matched the trusted-domain allowlist.",
                 "Trusted-domain verification completed successfully, so an ML explanation was not required.",
+                "Domain age and live page check — not run, because the domain is on the trusted list.",
             ],
             "plain_text": (
                 f"The official domain '{domain}' matched the trusted-domain "
@@ -327,6 +366,9 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
     vec, features, verdict = result["vec"], result["features"], result["verdict"]
     label = verdict["label"]
     p_phish = verdict["p_phish"]
+    # Numbers in the text: the URL model's own (raw) score, as in the SHAP
+    # chart, and the result page's Score (score_view.py) for the result.
+    final_score = verdict["score"]["risk_score"]
     prediction = verdict["prediction"]
     risk = verdict["risk"]
     uncertain_reputable = verdict["uncertain_reason"] == "reputable_domain"
@@ -421,13 +463,13 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         risks = [s["text"] for s in page["signals"] if s["kind"] == "risk"]
         if verdict.get("url_reason") == "brand_impersonation":
             url_part = (f"it uses the brand name \"{verdict['brand']}\" on a domain the brand "
-                        f"does not own; URL pattern score {p_phish:.0%}")
+                        f"does not own, with a URL pattern score of {p_phish:.0%}")
         else:
-            url_part = (f"{_URL_REASON.get(verdict.get('url_reason'), 'borderline URL signals')}; "
-                        f"URL pattern score {p_phish:.0%}")
+            url_part = (f"{_URL_REASON.get(verdict.get('url_reason'), 'borderline URL signals')}, "
+                        f"with a URL pattern score of {p_phish:.0%}")
         why_detected = [
-            f"On the URL alone this address was only Suspicious ({url_part}); what the page "
-            "itself does is what raised the verdict to phishing.",
+            f"On the URL alone this address was only Suspicious ({url_part}), and what the "
+            "page itself does is what raised the verdict to phishing.",
         ] + [f"Live page check — {text}" for text in risks]
         evidence = build_evidence(prediction, features, shap_out, lime_out, limit=3)
         plain = (
@@ -442,18 +484,18 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         s2 = verdict["stage2"]
         why_detected = build_reason_bullets("phishing", features, shap_out,
                                             attack_analysis=attack_analysis, limit=3)
-        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=2) + [_age_card(s2)]
+        evidence = build_evidence("phishing", features, shap_out, lime_out, limit=2) + [_age_card(s2, prediction)]
         plain = (
             f"{'Phishing' if prediction == 'phishing' else 'Suspicious'}. This website's domain "
             f"was registered {describe_age(s2['age_days'])}. New domains are a strong sign of "
             f"phishing, and together with the URL pattern score ({p_phish:.0%}) the domain-age "
-            f"check gives a {s2['p']:.0%} phishing probability. Do not enter passwords or payment "
+            f"check gives a score of {final_score:.0%}. Do not enter passwords or payment "
             "details unless you are sure who runs this website."
         )
         security_analysis = None if prediction == "phishing" else [
             f"The domain {s2['domain']} was registered {describe_age(s2['age_days'])} "
             f"({s2['registered']}), recently compared with most genuine websites.",
-            "The URL pattern alone was not enough for a warning; the domain's age is what "
+            "The URL pattern alone was not enough for a warning, and the domain's age is what "
             "raised this result.",
         ]
     elif "established_domain" in (verdict["uncertain_reason"], verdict["legit_reason"]):
@@ -469,14 +511,14 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             evidence = build_evidence("phishing", features, shap_out, lime_out, limit=2)
             for card in evidence:
                 card["support"] = "Raised the URL pattern score (outweighed by the domain's age)"
-        evidence.append(_age_card(s2))
+        evidence.append(_age_card(s2, prediction))
         if lures:
-            why_detected.append(f"The address contains {_english_join(lures)}; a long-established "
+            why_detected.append(f"The address contains {_english_join(lures)}, and a long-established "
                                 "website can still be hacked, so check the address before signing in.")
         plain = (
             f"{'Legitimate' if prediction == 'legitimate' else 'Suspicious'}. The address pattern "
             f"resembles phishing ({p_phish:.0%}), but its domain {s2['domain']} has existed since "
-            f"{s2['registered'][:4]}; with the domain's age the phishing probability is {s2['p']:.0%}."
+            f"{s2['registered'][:4]}, and with the domain's age the score is {final_score:.0%}."
         )
         security_analysis = [
             f"The domain {s2['domain']} was registered in {s2['registered'][:4]}, long before "
@@ -542,7 +584,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         security_analysis = [
             f"\"{imitation}\" is one letter away from \"{brand_name}\", a pattern used by "
             "typosquatting websites.",
-            "The URL pattern alone was not enough for a warning; the misspelled brand "
+            "The URL pattern alone was not enough for a warning, and the misspelled brand "
             "name is what raised this result to suspicious.",
         ]
     elif uncertain_brand:
@@ -568,7 +610,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         security_analysis = [
             f"The domain contains \"{brand_name}\" but is not among the most visited "
             "websites, which is where a brand's own sites normally rank.",
-            "The URL pattern alone was not enough for a warning; the brand name on "
+            "The URL pattern alone was not enough for a warning, and the brand name on "
             "an unknown domain is what raised this result to suspicious.",
         ]
     elif verdict["escalated_by"] == "brand_impersonation" and verdict["lookalike"]:
@@ -583,7 +625,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
             f"spelling \"{imitation}\", on a domain that is not one of {brand_name}'s "
             "websites.",
         ] + _technique_summary_bullets(attack_analysis, limit=2) + [
-            f"The URL pattern score alone is {p_phish:.0%}; the look-alike brand name "
+            f"The URL pattern score alone is {p_phish:.0%}, and the look-alike brand name "
             "is what raised the verdict to phishing.",
         ]
         evidence = build_evidence(prediction, features, shap_out, lime_out, limit=3)
@@ -601,7 +643,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         )
         evidence = build_evidence("phishing", features, shap_out, lime_out, limit=3)
         plain = (
-            f"Suspicious (low-confidence result, {p_phish:.0%} phishing score). "
+            f"Suspicious (low-confidence result, {final_score:.0%} score). "
             "Some URL characteristics resemble phishing, but not strongly "
             "enough to confirm it. This is not a confirmed phishing detection - "
             "check the domain name carefully before entering passwords or "
@@ -773,12 +815,22 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
     # Fixed order for the "Why" text: the model and rule reasons first, then
     # the domain age, then the live page check.
     page_lines = [line for line in why_detected if line.startswith("Live page check")]
-    why_detected = [line for line in why_detected if line not in page_lines][:3]
-    age_line = _age_line(verdict, url)
+    why_detected = [line for line in why_detected if line not in page_lines]
+    # Every explanation keeps the URL model's own view (its SHAP signals):
+    # rule-decided results and long technique lists used to leave it out.
+    model_lines = [line for line in why_detected if any(m in line for m in MODEL_LINE_MARKERS)]
+    if not model_lines:
+        model_lines = [model_signal_line(features, shap_out, p_phish, UNCERTAIN_THRESHOLD,
+                                         verdict["score"]["source"] == "rule")]
+        why_detected = why_detected[:2] + model_lines
+    elif model_lines[0] not in why_detected[:3]:
+        why_detected = why_detected[:2] + model_lines[:1]
+    why_detected = why_detected[:3]
+    age_line = _age_line(verdict, url, prediction)
     if age_line:
         why_detected.append(age_line)
-    if prediction == "phishing" and not page_lines:
-        page_lines = _phishing_page_lines(page)
+    if not page_lines:
+        page_lines = _page_lines(page, prediction)
     why_detected += page_lines[:2]
 
     if checked_url:
@@ -788,6 +840,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
     return {
         "url": req.url,
         "checked_url": checked_url,
+        "unicode_host": result["unicode_host"],
         "prediction": prediction,
         "risk_level": risk,
         "confidence": round(verdict["confidence"], 4),
@@ -800,6 +853,7 @@ def explain(req: URLRequest, user: User = Depends(current_user)):
         "page_check": page,
         "stage2": verdict["stage2"],
         "reputation": verdict["reputation"],
+        "score": verdict["score"],
         "phishing_probability": round(p_phish, 4),
         "legitimate_probability": round(1 - p_phish, 4),
         "model_used": model_info()["name"],
@@ -850,7 +904,7 @@ def my_detections(
     page: int = 1,
     page_size: int = 20,
     q: Optional[str] = None,
-    result: Optional[str] = None,          # "phishing" | "legitimate"
+    result: Optional[str] = None,          # "phishing" | "uncertain" | "legitimate"
     risk: Optional[str] = None,            # "Low" | "Medium" | "High"
     attack_type: Optional[str] = None,
     date_from: Optional[str] = None,       # "YYYY-MM-DD"
@@ -862,7 +916,7 @@ def my_detections(
     query = db.query(Detection).filter(Detection.user_id == user.id)
     if q:
         query = query.filter(Detection.url.ilike(f"%{q}%"))
-    if result in ("phishing", "legitimate"):
+    if result in ("phishing", "uncertain", "legitimate"):
         query = query.filter(Detection.prediction == result)
     if risk in ("Low", "Medium", "High"):
         query = query.filter(Detection.risk_level == risk)
@@ -908,17 +962,19 @@ def detections_history_summary(
     if source in ("website", "extension"):
         q = q.filter(Detection.source == source)
 
-    total = q.count()
-    phishing = q.filter(Detection.label == 1).count()
-    legitimate = total - phishing
+    # Counted by the verdict users were shown, not the model's raw label.
+    counts = verdict_counts(p for (p,) in q.with_entities(Detection.prediction))
+    total = sum(counts.values())
+    phishing, suspicious, legitimate = counts["phishing"], counts["suspicious"], counts["legitimate"]
     high_risk = q.filter(Detection.risk_level == "High").count()
 
     since7 = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
     trend_query = (
         db.query(
             func.date(Detection.created_at).label("day"),
-            func.sum((Detection.label == 1).cast(Integer)).label("phishing"),
-            func.sum((Detection.label == 0).cast(Integer)).label("legitimate"),
+            func.sum((Detection.prediction == "phishing").cast(Integer)).label("phishing"),
+            func.sum((Detection.prediction == "uncertain").cast(Integer)).label("suspicious"),
+            func.sum((Detection.prediction == "legitimate").cast(Integer)).label("legitimate"),
         )
         .filter(Detection.user_id == user.id, Detection.created_at >= since7)
     )
@@ -927,7 +983,7 @@ def detections_history_summary(
     trend_rows = trend_query.group_by("day").order_by("day").all()
     trend_7d = [
         {"day": r.day, "phishing": int(r.phishing or 0),
-         "legitimate": int(r.legitimate or 0)}
+         "suspicious": int(r.suspicious or 0), "legitimate": int(r.legitimate or 0)}
         for r in trend_rows
     ]
 
@@ -952,7 +1008,7 @@ def detections_history_summary(
 
     return {
         "totals": {
-            "total": total, "phishing": phishing,
+            "total": total, "phishing": phishing, "suspicious": suspicious,
             "legitimate": legitimate, "high_risk": high_risk,
         },
         "trend_7d": trend_7d,
@@ -1054,14 +1110,15 @@ def detections_dashboard_visuals(
         q = q.filter(Detection.source == source)
     rows = q.all()
 
-    phishing = sum(1 for r in rows if r.label == 1)
-    legitimate = len(rows) - phishing
+    # Counted by the verdict users were shown, not the model's raw label.
+    counts = verdict_counts(r.prediction for r in rows)
+    phishing, suspicious, legitimate = counts["phishing"], counts["suspicious"], counts["legitimate"]
 
     trend_map = {}
     for r in rows:
         day = r.created_at.date().isoformat()
-        bucket = trend_map.setdefault(day, {"phishing": 0, "legitimate": 0})
-        bucket["phishing" if r.label == 1 else "legitimate"] += 1
+        bucket = trend_map.setdefault(day, {"phishing": 0, "suspicious": 0, "legitimate": 0})
+        bucket[VERDICT_KEY.get(r.prediction, "legitimate")] += 1
     trend = [
         {"day": day, **counts} for day, counts in sorted(trend_map.items())
     ]
@@ -1087,7 +1144,7 @@ def detections_dashboard_visuals(
         "date_from": since.date().isoformat(),
         "date_to": (until - timedelta(days=1)).date().isoformat(),
         "trend": trend,
-        "result_counts": {"phishing": phishing, "legitimate": legitimate},
+        "result_counts": {"phishing": phishing, "suspicious": suspicious, "legitimate": legitimate},
         "feature_distribution": _feature_distribution([r.url for r in rows]),
         "attack_category_frequency": attack_category_frequency,
         "source_distribution": _source_distribution([s for (s,) in since_rows]),
@@ -1104,9 +1161,10 @@ def personal_summary(
     and a small window of recent scans.
     """
     q = db.query(Detection).filter(Detection.user_id == user.id)
-    total = q.count()
-    phish = q.filter(Detection.label == 1).count()
-    legit = total - phish
+    # Counted by the verdict users were shown, not the model's raw label.
+    counts = verdict_counts(p for (p,) in q.with_entities(Detection.prediction))
+    total = sum(counts.values())
+    phish, suspicious, legit = counts["phishing"], counts["suspicious"], counts["legitimate"]
 
     # Feature-distribution counts across the user's own scans.
     dist = {
@@ -1134,7 +1192,7 @@ def personal_summary(
         tzinfo=None, day=1, hour=0, minute=0, second=0, microsecond=0,
     )
     phishing_this_month = q.filter(
-        Detection.label == 1, Detection.created_at >= month_start,
+        Detection.prediction == "phishing", Detection.created_at >= month_start,
     ).count()
 
     # Detection trend for the last 7 days (mirrors the admin dashboard's
@@ -1143,20 +1201,21 @@ def personal_summary(
     trend_rows = (
         db.query(
             func.date(Detection.created_at).label("day"),
-            func.sum((Detection.label == 1).cast(Integer)).label("phishing"),
-            func.sum((Detection.label == 0).cast(Integer)).label("legitimate"),
+            func.sum((Detection.prediction == "phishing").cast(Integer)).label("phishing"),
+            func.sum((Detection.prediction == "uncertain").cast(Integer)).label("suspicious"),
+            func.sum((Detection.prediction == "legitimate").cast(Integer)).label("legitimate"),
         )
         .filter(Detection.user_id == user.id, Detection.created_at >= since7)
         .group_by("day").order_by("day").all()
     )
     trend_7d = [
         {"day": r.day, "phishing": int(r.phishing or 0),
-         "legitimate": int(r.legitimate or 0)}
+         "suspicious": int(r.suspicious or 0), "legitimate": int(r.legitimate or 0)}
         for r in trend_rows
     ]
 
     return {
-        "totals": {"total": total, "phishing": phish, "legitimate": legit},
+        "totals": {"total": total, "phishing": phish, "suspicious": suspicious, "legitimate": legit},
         "feature_distribution": dist,
         "recent": [DetectionOut.model_validate(r).model_dump(mode="json")
                    for r in recent],

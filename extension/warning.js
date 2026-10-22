@@ -37,7 +37,11 @@ async function init() {
 }
 
 function render(card, data, tabId) {
-    if (data.mode === "blocked") {
+    if (data.mode === "checking") {
+        renderChecking(card, data, tabId);
+    } else if (data.mode === "suspicious") {
+        renderSuspicious(card, data, tabId);
+    } else if (data.mode === "blocked") {
         renderBlocked(card, data);
     } else if (data.mode === "unreachable") {
         renderUnreachable(card, data, tabId);
@@ -46,19 +50,132 @@ function render(card, data, tabId) {
     }
 }
 
-function renderUnreachable(card, data, tabId) {
+// Shown while the address is scanned; the website opens only once the
+// result is in (background.js holdTab). Replaces itself, so Back skips it.
+const MIN_CHECKING_MS = 800;
+
+function renderChecking(card, data, tabId) {
     card.classList.add("pg-neutral");
 
     card.innerHTML = `
         <h1>&#128737; PhishGuard AI</h1>
-        <h2>Website Unavailable After Continue Access</h2>
+        <h2>Checking This Website…</h2>
+        <div class="pg-spinner"></div>
+        <p>PhishGuard AI is checking this address before it opens. This usually
+        takes a few seconds; a new or unknown website can take a little longer.</p>
+        <div class="pg-info">
+            <p><b>Website:</b><br><span class="pg-mono">${pgEscape(data.url)}</span></p>
+        </div>
+        <p class="pg-small" id="pg-slow" hidden>This check is taking longer than usual.</p>
+        <button id="pg-back-safety">&#8592; Go Back</button>
+        <button id="pg-skip" hidden>Open Without Waiting</button>
+    `;
+
+    const backBtn = document.getElementById("pg-back-safety");
+    backBtn.addEventListener("click", async () => {
+        backBtn.disabled = true;
+        await chrome.runtime.sendMessage({ action: "GO_BACK", tabId });
+    });
+
+    const skipBtn = document.getElementById("pg-skip");
+    skipBtn.addEventListener("click", async () => {
+        skipBtn.disabled = true;
+        await chrome.runtime.sendMessage({ action: "SKIP_CHECK", url: data.url });
+        location.replace(data.url);
+    });
+
+    const started = Date.now();
+    const poll = async () => {
+        let target = null;
+        try {
+            target = await chrome.runtime.sendMessage({ action: "GET_CHECK_RESULT", checkId: data.checkId });
+        } catch (error) {
+            // Service worker restarting: ask again.
+        }
+        if (target) {
+            // Kept on screen briefly even for an instant result (trusted
+            // websites), so every check is visible rather than a flash.
+            setTimeout(() => location.replace(target), Math.max(0, MIN_CHECKING_MS - (Date.now() - started)));
+            return;
+        }
+        if (Date.now() - started > 20000) {
+            document.getElementById("pg-slow").hidden = false;
+            skipBtn.hidden = false;
+        }
+        setTimeout(poll, 250);
+    };
+    poll();
+}
+
+// A Suspicious result: asks first, like the Phishing warning, in a milder
+// style (some signs of phishing, not enough to confirm it).
+function renderSuspicious(card, data, tabId) {
+    card.classList.add("pg-caution");
+    const result = data.result || {};
+    const risk = result.risk_level || "Medium";
+
+    card.innerHTML = `
+        <h1>&#9888;&#65039; PhishGuard AI</h1>
+        <h2>Suspicious Website – Check Before You Continue</h2>
+        <p>PhishGuard AI paused this page because its address shows some signs
+        of phishing, but not enough to confirm it. Check that this is the
+        website you meant to open before you continue.</p>
 
         <div class="pg-info">
-            <p>You selected <b>Continue Access</b> for this website.</p>
+            <p><b>Website</b><br><span class="pg-mono">${pgEscape(result.url || data.url)}</span></p>
+            <p><b>Risk level</b><br>
+                <span class="pg-badge ${pgRiskBadgeClass(risk)}">${pgEscape(risk)}</span>
+            </p>
+            <p><b>Score</b><br>${pgPct(result.score ? result.score.risk_score : result.phishing_probability)}</p>
+            ${data.reason ? `<p><b>Why it was flagged</b><br>${pgEscape(data.reason)}</p>` : ""}
+        </div>
+
+        <div class="pg-recommendation"><b>What you should do:</b> Only continue if you
+        know this website and opened it on purpose. Do not enter passwords or
+        payment details unless you are sure who runs it.</div>
+
+        <button id="pg-leave">&#8592; Go Back to Safety (Recommended)</button>
+        <button id="pg-block">Block This Website</button>
+        <button id="pg-report">Report as Phishing</button>
+        <button id="pg-continue">Continue to Website</button>
+        <p class="pg-small">A blocked website can only be unblocked by logging in to
+        your PhishGuard AI account (Blocked Websites page).</p>
+    `;
+
+    wireButtons(result.url || data.url, null, tabId, {
+        riskLevel: risk,
+        reason: data.reason || "",
+    });
+}
+
+// The website could not be reached: after Continue Access (continued), or
+// after a scan that did not warn (prediction = that scan's result).
+function renderUnreachable(card, data, tabId) {
+    card.classList.add("pg-neutral");
+
+    const verdict = data.trusted ? "Trusted website"
+        : data.prediction === "uncertain" ? "Suspicious"
+        : "Legitimate";
+    const badge = data.prediction === "uncertain" ? "risk-medium" : "risk-low";
+    const intro = data.continued
+        ? `<p>You selected <b>Continue Access</b> for this website.</p>
             <p>
                 PhishGuard AI has allowed the navigation, but the destination
                 website could not be reached.
-            </p>
+            </p>`
+        : `<p>PhishGuard AI checked this website, but the website itself could
+            not be reached. This is not caused by PhishGuard AI.</p>
+            <p><b>PhishGuard result:</b><br>
+                <span class="pg-badge ${badge}">${pgEscape(verdict)}</span>
+                ${data.trusted || data.riskScore == null ? "" : `<span class="pg-small">Score ${pgPct(data.riskScore)}</span>`}
+            </p>`;
+
+    card.innerHTML = `
+        <h1>&#128737; PhishGuard AI</h1>
+        <h2>${data.continued ? "Website Unavailable After Continue Access" : "Website Unavailable"}</h2>
+
+        <div class="pg-info">
+            ${intro}
             <p><b>Website:</b><br>${pgEscape(data.url)}</p>
             <p><b>Possible reasons:</b></p>
             <ul class="pg-reasons">
@@ -74,7 +191,14 @@ function renderUnreachable(card, data, tabId) {
         </div>
 
         <button id="pg-back-safety">&#8592; Return to Safety</button>
+        <button id="pg-retry">Try Again</button>
     `;
+
+    const retryBtn = document.getElementById("pg-retry");
+    retryBtn.addEventListener("click", () => {
+        retryBtn.disabled = true;
+        window.location.href = data.url;
+    });
 
     const backBtn = document.getElementById("pg-back-safety");
     backBtn.addEventListener("click", async () => {
@@ -201,8 +325,8 @@ function renderWarning(card, data, tabId) {
                 <span class="pg-badge ${pgRiskBadgeClass(risk)}">${pgEscape(risk)}</span>
                 <span class="pg-small">${pgEscape(pgRiskMeaning(risk))}</span>
             </p>
-            <p><b>Model confidence</b><br>${pgPct(result.confidence)}</p>
-            <p><b>Phishing probability</b><br>${pgPct(result.phishing_probability)}</p>
+            ${result.score && result.score.confidence == null ? "" : `<p><b>Confidence</b><br>${pgPct(result.score ? result.score.confidence : result.confidence)}</p>`}
+            <p><b>Score</b><br>${pgPct(result.score ? result.score.risk_score : result.phishing_probability)}</p>
             <p><b>Attack type</b><br>${pgEscape(attack.category || "Unknown")}
                 ${attack.category ? `<br><span class="pg-small">${pgEscape(pgAttackDescription(attack.category))}</span>` : ""}</p>
             ${reasons.length ? `
@@ -251,12 +375,23 @@ function wireButtons(url, attackCategory, tabId, details = {}) {
     }
 
     const reportBtn = document.getElementById("pg-report");
+    const markReported = () => {
+        reportBtn.disabled = true;
+        reportBtn.textContent = "Reported ✓";
+    };
     if (reportBtn) {
+        // Already reported (pending or approved): no second report. A report
+        // the admin rejected is deleted, so the button comes back.
+        fetch(`http://127.0.0.1:8000/api/extension/report-status?url=${encodeURIComponent(url)}`)
+            .then((res) => res.json())
+            .then((status) => { if (status.reported) markReported(); })
+            .catch(() => { /* backend unreachable: keep the button */ });
+
         reportBtn.addEventListener("click", async () => {
             reportBtn.disabled = true;
             reportBtn.textContent = "Reporting...";
             try {
-                await fetch("http://127.0.0.1:8000/api/extension/report", {
+                const res = await fetch("http://127.0.0.1:8000/api/extension/report", {
                     method: "POST",
                     headers: { "Content-Type": "application/json", ...(await pgAuthHeaders()) },
                     body: JSON.stringify({
@@ -268,7 +403,11 @@ function wireButtons(url, attackCategory, tabId, details = {}) {
                         browser_info: navigator.userAgent,
                     }),
                 });
-                reportBtn.textContent = "Reported ✓";
+                // 409: someone reported it in the meantime.
+                if (!res.ok && res.status !== 409) {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+                markReported();
             } catch (error) {
                 reportBtn.textContent = "Report failed";
                 reportBtn.disabled = false;

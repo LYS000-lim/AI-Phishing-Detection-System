@@ -145,7 +145,10 @@ export default function BrowserExtension() {
               <dt>Verdict</dt><dd>{detail.prediction === 'uncertain' ? 'suspicious' : detail.prediction}</dd>
               <dt>Risk Level</dt><dd>{detail.risk_level}</dd>
               <dt>Attack Type</dt><dd>{detail.attack_type || '-'}</dd>
-              <dt>Confidence</dt><dd>{(detail.confidence * 100).toFixed(2)}%</dd>
+              <dt>Score</dt><dd>{(detail.risk_score * 100).toFixed(1)}%</dd>
+              {detail.score_confidence != null && (
+                <><dt>Confidence</dt><dd>{(detail.score_confidence * 100).toFixed(1)}%</dd></>
+              )}
               <dt>Model</dt><dd className="mono">{detail.model_used}</dd>
               <dt>Time</dt><dd>{utcDate(detail.created_at).toLocaleString('en-GB')}</dd>
             </dl>

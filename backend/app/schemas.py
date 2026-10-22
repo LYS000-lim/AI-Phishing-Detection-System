@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Literal, Optional
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 _URL_MAX_LEN = 2048
 _PASSWORD_MIN_LEN = 8
@@ -207,8 +207,20 @@ class DetectionOut(BaseModel):
     created_at: datetime
     ip_address: Optional[str] = None
     source: str = "website"
+    # Shown in history views instead of the raw model values (score_view.py).
+    risk_score: Optional[float] = None
+    score_confidence: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def _fill_score(self):
+        if self.risk_score is None:
+            # Saved before scores were stored: rebuilt from the verdict
+            # and the raw URL score.
+            from .score_view import stored_score
+            self.risk_score, self.score_confidence = stored_score(self.prediction, self.phishing_probability)
+        return self
 
 class ReportedURLOut(BaseModel):
     id: int

@@ -241,12 +241,18 @@ def detect_phishing_type(url: str, features: dict) -> dict:
         category = "Fake Giveaway / Scam"
     elif malware_hits:
         category = "Tech Support / Malware Scam"
+    elif brand:
+        category = "Brand Impersonation"
     else:
-        category = "Domain Spoofing / Brand Impersonation"
+        category = "General Phishing"
 
     # ------------------------- Techniques -----------------------
+    # Technique names say HOW the attack is done, so none of them repeats
+    # the category name (e.g. not "Brand Impersonation" under the Brand
+    # Impersonation category).
     if brand:
-        techniques.append("Brand Impersonation")
+        if not brand.get("typo_token"):
+            techniques.append("Brand Name on Unrelated Domain")
         brand_name = brand["brand"]
         if brand.get("financial"):
             indicators.append(
@@ -260,17 +266,17 @@ def detect_phishing_type(url: str, features: dict) -> dict:
             )
 
         if brand.get("typo_token"):
-            techniques.append("Typosquatting")
+            techniques.append("Typosquatting (Look-alike Spelling)")
             indicators.append(
                 f'The text "{brand["typo_token"]}" appears visually similar to '
                 f'the trusted brand "{brand_name}".'
             )
 
     if credential_hits:
-        # Keep Brand Impersonation as the primary technique when present. Add
-        # credential harvesting only when it provides distinct information.
+        # Keep the brand technique as the primary one when present. Add the
+        # lure-words technique only when it provides distinct information.
         if not brand:
-            techniques.append("Credential Harvesting")
+            techniques.append("Login / Account Lure Words")
         shown = credential_hits[:3]
         quoted = ", ".join(f'"{w}"' for w in shown)
         if brand:
@@ -302,13 +308,18 @@ def detect_phishing_type(url: str, features: dict) -> dict:
             )
 
         if any(term in malware_hits for term in delivery_terms):
-            techniques.append("Malware Delivery")
+            techniques.append("Malicious Download Link")
             shown_delivery = [term for term in malware_hits if term in delivery_terms][:3]
             quoted_delivery = ", ".join(f'"{w}"' for w in shown_delivery)
             indicators.append(
                 f"The URL contains download or executable-related wording such as {quoted_delivery}, "
                 "which may indicate an attempt to deliver malicious software."
             )
+
+    if financial_hits and not brand:
+        techniques.append("Payment / Banking Lure Words")
+    if giveaway_hits:
+        techniques.append("Prize / Reward Lure Words")
 
     if features.get("HasObfuscation") == 1:
         techniques.append("URL Obfuscation")

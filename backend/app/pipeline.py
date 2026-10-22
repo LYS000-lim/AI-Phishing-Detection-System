@@ -19,16 +19,39 @@ explanation (/api/explain) and the Chrome extension (/api/extension/scan):
      Phishing results are never lowered: for them the page check only adds
      findings to the explanation.
 """
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
+
+import idna
 
 from . import page_check
 from .allowlist import matched_domain, unwrap_redirect
 from .features import extract_features, feature_vector
-from .ml_state import classify_vec
+from .ml_state import PHISH_THRESHOLD, UNCERTAIN_THRESHOLD, classify_vec
 from .reputation import _extract_icann
 from .schemas import _validate_url
+from .score_view import score_view
 
 _SIGN_IN_HOSTS = ("login.", "signin.", "accounts.", "account.", "auth.", "sso.", "idp.")
+
+
+def ascii_url(url: str) -> str:
+    """The URL with a Unicode hostname in the form a browser opens: letters
+    such as "ʷ" (small raised w) or "ｍ" (full-width m) become plain w / m
+    (UTS46, the mapping browsers use), and other non-Latin letters become a
+    punycode (xn--) label. Returned unchanged when it cannot be mapped."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if host.isascii():
+        return url
+    try:
+        mapped = idna.encode(host, uts46=True).decode("ascii")
+    except (idna.IDNAError, UnicodeError):
+        return url
+    netloc = parts.netloc
+    at = netloc.rfind("@") + 1
+    rest = netloc[at:]
+    port = rest[len(host):] if rest.lower().startswith(host) else ""
+    return urlunsplit(parts._replace(netloc=netloc[:at] + mapped + port))
 
 
 def _domain(url: str) -> str:
@@ -81,12 +104,16 @@ def evaluate(url: str, page_for=("uncertain",)) -> dict:
 
     {"url": as entered, "checked": the address the result is for,
      "checked_url": that address when it differs from the input, else None,
+     "unicode_host": True when the input's hostname had Unicode letters
+     (checked as the address a browser opens, see ascii_url),
      "trusted": matched allowlist domain or "", "vec", "features",
      "verdict": classify_vec result (None when trusted)}"""
-    checked = unwrap_redirect(url)
+    mapped = ascii_url(url)
+    checked = unwrap_redirect(mapped)
     followed = False
     while True:
         out = {"url": url, "checked": checked, "checked_url": checked if checked != url else None,
+               "unicode_host": mapped != url,
                "trusted": matched_domain(checked), "vec": None, "features": None, "verdict": None}
         if out["trusted"]:
             return out
@@ -95,6 +122,7 @@ def evaluate(url: str, page_for=("uncertain",)) -> dict:
         verdict["page_check"] = None
         out.update(vec=vec, features=features, verdict=verdict)
         if not page_check.enabled() or verdict["prediction"] not in page_for:
+            verdict["score"] = score_view(verdict, UNCERTAIN_THRESHOLD, PHISH_THRESHOLD)
             return out
         page = page_check.check(checked)
         # A short link: judge the address it opens instead.
@@ -110,4 +138,6 @@ def evaluate(url: str, page_for=("uncertain",)) -> dict:
             if extra:
                 page = dict(page, signals=page["signals"] + extra)
         apply_page_check(verdict, page)
+        # The result pages' score (score_view.py), once the verdict is final.
+        verdict["score"] = score_view(verdict, UNCERTAIN_THRESHOLD, PHISH_THRESHOLD)
         return out

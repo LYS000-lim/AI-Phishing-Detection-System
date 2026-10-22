@@ -70,6 +70,13 @@ async function isBypassed(url) {
     return !!bypass[url];
 }
 
+async function removeBypass(url) {
+    const store = await chrome.storage.session.get("bypassUrls");
+    const bypass = store.bypassUrls || {};
+    delete bypass[url];
+    await chrome.storage.session.set({ bypassUrls: bypass });
+}
+
 async function addBypass(url) {
     const store = await chrome.storage.session.get("bypassUrls");
     const bypass = store.bypassUrls || {};
@@ -96,6 +103,20 @@ function hostnameOf(url) {
     } catch {
         return "";
     }
+}
+
+// A notice is shown only on the website it was scanned for. When that
+// address redirected straight to another website in the same navigation
+// (web3.storage -> storacha.network), the notice is shown there instead,
+// naming where the scanned address led.
+async function withRedirect(tabId, data) {
+    const navKey = `navUrl_${tabId}`;
+    const redirectKey = `redirectHost_${tabId}`;
+    const store = await chrome.storage.session.get([navKey, redirectKey]);
+    if (store[redirectKey] && data.url === store[navKey]) {
+        return { ...data, redirectedTo: store[redirectKey] };
+    }
+    return data;
 }
 
 async function isLocallyBlocked(url) {
@@ -193,8 +214,68 @@ async function showWarningPage(tabId, mode, payload) {
         `warning.html?id=${encodeURIComponent(id)}`
     );
 
+    // A tab waiting on the Checking page for this address goes there instead.
+    if (mode !== "checking" && await releaseHold(tabId, payload.url, target)) {
+        return;
+    }
     chrome.tabs.update(tabId, { url: target });
 }
+
+// ----------------------------------------------------------------
+// Checking page - a website opens only after its result is in. The tab
+// shows warning.html in "checking" mode while the scan runs; the result
+// then sends it to the website (allowed once, without a second scan), the
+// Phishing warning, the Suspicious page or the block page. The Checking
+// page replaces itself, so Back skips it. Every scanned website gets it,
+// trusted ones included, so each check is visible.
+// ----------------------------------------------------------------
+
+// tabId -> {checkId, url} for tabs waiting on the Checking page.
+const heldTabs = new Map();
+
+async function holdTab(tabId, url) {
+    const checkId = `c_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    heldTabs.set(tabId, { checkId, url });
+    await showWarningPage(tabId, "checking", { url, checkId });
+}
+
+// Sends a held tab to target (the website itself or a PhishGuard page).
+// False when the tab is not waiting for this address.
+async function releaseHold(tabId, url, target) {
+    const held = heldTabs.get(tabId);
+    if (!held || held.url !== url) {
+        return false;
+    }
+    heldTabs.delete(tabId);
+    if (target === url) {
+        await allowOnce(url);
+    }
+    const store = await chrome.storage.session.get("checkResults");
+    const results = store.checkResults || {};
+    results[held.checkId] = target;
+    await chrome.storage.session.set({ checkResults: results });
+    return true;
+}
+
+// The next navigation to url opens without a scan (it was just checked).
+async function allowOnce(url) {
+    const store = await chrome.storage.session.get("allowOnce");
+    const allowed = store.allowOnce || {};
+    allowed[url] = true;
+    await chrome.storage.session.set({ allowOnce: allowed });
+}
+
+async function takeAllowOnce(url) {
+    const store = await chrome.storage.session.get("allowOnce");
+    const allowed = store.allowOnce || {};
+    if (!allowed[url]) {
+        return false;
+    }
+    delete allowed[url];
+    await chrome.storage.session.set({ allowOnce: allowed });
+    return true;
+}
+
 
 // ----------------------------------------------------------------
 // Legitimate-scan toast — non-blocking, shown by toast.js (a small content
@@ -212,7 +293,7 @@ async function showWarningPage(tabId, mode, payload) {
 // ----------------------------------------------------------------
 
 async function announceSafeToast(tabId, result) {
-    const payload = {
+    let payload = {
         url: result.url,
         verification: result.trusted_domain
             ? "Trusted Domain Allowlist"
@@ -228,6 +309,7 @@ async function announceSafeToast(tabId, result) {
 
     const key = `safeToast_${tabId}`;
     await chrome.storage.session.set({ [key]: payload });
+    payload = await withRedirect(tabId, payload);
 
     try {
         await chrome.tabs.sendMessage(tabId, {
@@ -244,14 +326,13 @@ async function announceSafeToast(tabId, result) {
 // explanations.is_https_only_verdict on the backend) — deliberately NOT the
 // green "safe" toast (would falsely reassure) and NOT the red blocking
 // warning page (the model isn't actually confident this is phishing).
-async function announceUncertainToast(tabId, result) {
+// Why a result is Suspicious, in one sentence (notice and Suspicious page).
+function uncertainReason(result) {
     const lures = result.lures || [];
     const lureText = lures.length <= 1
         ? (lures[0] || "")
         : `${lures.slice(0, -1).join(", ")} and ${lures[lures.length - 1]}`;
-    const payload = {
-        url: result.url,
-        reason: result.uncertain_reason === "new_domain" && result.stage2
+    return result.uncertain_reason === "new_domain" && result.stage2
             ? `This website's domain was registered on ${result.stage2.registered}. New domains are common for phishing - only enter details if you are sure who runs it.`
             : result.uncertain_reason === "established_domain" && result.stage2
             ? `Address pattern resembles phishing, but ${result.stage2.domain} has existed since ${result.stage2.registered.slice(0, 4)}. Check the address carefully.`
@@ -269,12 +350,19 @@ async function announceUncertainToast(tabId, result) {
             ? `Address pattern resembles phishing, but ${result.reputation?.domain} is a well-established website. Check the domain carefully.`
             : result.uncertain_reason === "borderline"
             ? "Some URL characteristics resemble phishing, but not enough to confirm it."
-            : "Flagged mainly because the site does not use HTTPS.",
+            : "Flagged mainly because the site does not use HTTPS.";
+}
+
+async function announceUncertainToast(tabId, result) {
+    let payload = {
+        url: result.url,
+        reason: uncertainReason(result),
         time: Date.now(),
     };
 
     const key = `uncertainToast_${tabId}`;
     await chrome.storage.session.set({ [key]: payload });
+    payload = await withRedirect(tabId, payload);
 
     try {
         await chrome.tabs.sendMessage(tabId, {
@@ -304,10 +392,27 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
     const url = details.url;
 
+    // PhishGuard's own pages (Checking, warnings) are not navigations to a
+    // website.
+    if (url.startsWith(chrome.runtime.getURL(""))) {
+        return;
+    }
+    heldTabs.delete(details.tabId);
+
+    // The website a Checking page just released: already scanned, and its
+    // notice is waiting in session storage for toast.js.
+    if (await takeAllowOnce(url)) {
+        await chrome.storage.session.remove(`redirectHost_${details.tabId}`);
+        await chrome.storage.session.set({ [`navUrl_${details.tabId}`]: url });
+        return;
+    }
+
     // A result waiting for the previous page in this tab (e.g. a Google
     // search page that never picked up its "Trusted" notice) must not be
     // shown on the next website.
-    await chrome.storage.session.remove([`safeToast_${details.tabId}`, `uncertainToast_${details.tabId}`]);
+    await chrome.storage.session.remove([`safeToast_${details.tabId}`, `uncertainToast_${details.tabId}`,
+        `redirectHost_${details.tabId}`]);
+    await chrome.storage.session.set({ [`navUrl_${details.tabId}`]: url });
 
     if (isRedirectHop(url)) {
         pendingHops.add(details.tabId);
@@ -316,7 +421,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     // A hop that forwards with a script starts a new navigation of its own.
     pendingHops.delete(details.tabId);
 
-    await scanNavigation(details.tabId, url);
+    await trackScan(details.tabId, url);
 });
 
 chrome.webNavigation.onCommitted.addListener(async (details) => {
@@ -324,18 +429,41 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
         return;
     }
     pendingHops.delete(details.tabId);
-    await scanNavigation(details.tabId, details.url);
+    await trackScan(details.tabId, details.url);
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => pendingHops.delete(tabId));
+// The server redirected the navigation to another website.
+chrome.webNavigation.onCommitted.addListener(async (details) => {
+    if (details.frameId !== 0 || !(details.transitionQualifiers || []).includes("server_redirect")) {
+        return;
+    }
+    await chrome.storage.session.set({ [`redirectHost_${details.tabId}`]: hostnameOf(details.url) });
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+    pendingHops.delete(tabId);
+    tabScans.delete(tabId);
+});
+
+// Each tab's latest scan, so a page that then fails to load can say what
+// PhishGuard found (see onErrorOccurred below).
+const tabScans = new Map();
+
+function trackScan(tabId, url) {
+    const promise = scanNavigation(tabId, url).catch(() => null);
+    tabScans.set(tabId, { url, promise });
+    return promise;
+}
 
 async function scanNavigation(tabId, url) {
     if (!isScannable(url)) {
         return;
     }
 
-    if (await isBypassed(url)) {
-        return;
+    // Continue Access opens without waiting.
+    const bypassed = await isBypassed(url);
+    if (!bypassed) {
+        await holdTab(tabId, url);
     }
 
     // Signed in: the user's "Block URL" list lives on their account and is
@@ -424,6 +552,12 @@ async function scanNavigation(tabId, url) {
         }
     }
 
+    // Continue Access releases the warning only. It is checked after the
+    // block lists, so a website blocked after continuing stays blocked.
+    if (bypassed) {
+        return;
+    }
+
     // 2. ML analysis (and trusted-domain bypass, handled server-side)
     try {
         const headers = { "Content-Type": "application/json" };
@@ -446,7 +580,8 @@ async function scanNavigation(tabId, url) {
             url: result.url,
             prediction: result.prediction,
             risk_level: result.risk_level,
-            confidence: result.confidence,
+            confidence: result.score ? result.score.confidence : result.confidence,
+            risk_score: result.score ? result.score.risk_score : null,
             attack_type: result.attack_type?.category || null,
         });
 
@@ -456,21 +591,30 @@ async function scanNavigation(tabId, url) {
                 result,
             });
         } else if (result.prediction === "uncertain") {
-            await announceUncertainToast(tabId, result);
+            // Asks first, like a Phishing result, in a milder style.
+            await showWarningPage(tabId, "suspicious", {
+                url,
+                result,
+                reason: uncertainReason(result),
+            });
         } else {
             await announceSafeToast(tabId, result);
+            await releaseHold(tabId, url, url);
         }
+        return result;
     } catch (error) {
         console.error("PhishGuard scan failed:", error);
+        // Backend unreachable: never leave the website stuck on Checking.
+        await releaseHold(tabId, url, url);
     }
 }
 
 // ----------------------------------------------------------------
-// Continue Access can only release the block — it can't guarantee the
-// destination actually exists. If the URL the user just bypassed then
-// fails to load (DNS/connection failure), show a PhishGuard-branded
-// explanation instead of Chrome's bare error page, so it's clear this is
-// a real-world connectivity issue and not the extension failing/re-blocking.
+// A website that fails to load (DNS/connection failure) gets a
+// PhishGuard-branded page instead of Chrome's bare error page, so it is
+// clear the website itself is down, not the extension failing: after
+// Continue Access (the block was released but the destination may not
+// exist), or after a scan that did not warn (it names the result).
 // ----------------------------------------------------------------
 
 const NETWORK_ERROR_MESSAGES = {
@@ -498,15 +642,34 @@ chrome.webNavigation.onErrorOccurred.addListener(async (details) => {
         return;
     }
 
-    // Only ever shown for a URL the user just released via Continue Access.
     // Does not touch the bypass list, so the URL is never re-blocked.
-    if (!(await isBypassed(details.url))) {
+    if (await isBypassed(details.url)) {
+        await showWarningPage(details.tabId, "unreachable", {
+            url: details.url,
+            reason: message,
+            continued: true,
+        });
         return;
     }
 
+    // A scan of this address that did not warn. A Phishing result already
+    // replaced the page with the warning, and a blocked one with the block
+    // page (no result is returned for those).
+    const scan = tabScans.get(details.tabId);
+    if (!scan || scan.url !== details.url) {
+        return;
+    }
+    const result = await scan.promise;
+    if (!result || result.prediction === "phishing") {
+        return;
+    }
     await showWarningPage(details.tabId, "unreachable", {
         url: details.url,
         reason: message,
+        continued: false,
+        prediction: result.prediction,
+        trusted: !!result.trusted_domain,
+        riskScore: result.score ? result.score.risk_score : null,
     });
 });
 
@@ -523,6 +686,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return;
         }
 
+        if (message.action === "GET_CHECK_RESULT") {
+            const store = await chrome.storage.session.get("checkResults");
+            const results = store.checkResults || {};
+            const target = results[message.checkId] || null;
+            if (target) {
+                delete results[message.checkId];
+                await chrome.storage.session.set({ checkResults: results });
+            }
+            sendResponse(target);
+            return;
+        }
+
+        if (message.action === "SKIP_CHECK") {
+            // "Open Without Waiting" on a slow check.
+            const tabId = sender.tab?.id;
+            if (tabId != null) {
+                heldTabs.delete(tabId);
+            }
+            await allowOnce(message.url);
+            sendResponse({ ok: true });
+            return;
+        }
+
         if (message.action === "GET_SAFE_TOAST") {
             const tabId = sender.tab?.id;
             if (tabId == null) {
@@ -535,7 +721,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (data) {
                 await chrome.storage.session.remove(key);
             }
-            sendResponse(data);
+            sendResponse(data && await withRedirect(tabId, data));
             return;
         }
 
@@ -551,7 +737,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (data) {
                 await chrome.storage.session.remove(key);
             }
-            sendResponse(data);
+            sendResponse(data && await withRedirect(tabId, data));
             return;
         }
 
@@ -586,6 +772,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 reason: message.reason || null,
             };
             await addLocalBlock(message.url, blockDetails);
+            // An earlier Continue Access no longer applies.
+            await removeBypass(message.url);
 
             // Signed in: also save it to the account so the user can see
             // (and unblock) it on the website's Browser Extension page.

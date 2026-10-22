@@ -381,12 +381,43 @@ def get_lime_explainer():
     return _lime_explainer
 
 
+# The global charts are also saved to outputs/, so a backend restart does
+# not recompute them: global SHAP takes about 3 minutes, which kept the Model
+# Analytics page on "Loading..." and made Ctrl+C wait until it finished. The
+# saved values are reused only for the same model file, background sample
+# and sample size; retraining makes them recompute once.
+def _cache_key(sample_size: int) -> str:
+    st = os.stat(os.path.join(_OUTPUTS, "deployment_model.joblib"))
+    return f"{st.st_size}-{st.st_mtime_ns}-{LIME_BG.shape}-{sample_size}"
+
+
+def _load_global(name: str, sample_size: int) -> Optional[np.ndarray]:
+    try:
+        saved = np.load(os.path.join(_OUTPUTS, f"global_{name}_cache.npz"))
+        if str(saved["key"]) == _cache_key(sample_size):
+            return saved["values"]
+    except (OSError, KeyError, ValueError):
+        pass
+    return None
+
+
+def _save_global(name: str, sample_size: int, values: np.ndarray) -> None:
+    try:
+        np.savez(os.path.join(_OUTPUTS, f"global_{name}_cache.npz"),
+                 key=_cache_key(sample_size), values=values)
+    except OSError:
+        pass  # the page still works; it only recomputes after a restart
+
+
 def global_shap_importance(sample_size: int = 500) -> np.ndarray:
     """
-    Mean-|SHAP| per feature, computed once and cached.
+    Mean-|SHAP| per feature, computed once and cached (in memory and in
+    outputs/, see above).
     Uses a random subsample of the LIME background matrix to stay fast.
     """
     global _global_shap_cache
+    if _global_shap_cache is None:
+        _global_shap_cache = _load_global("shap", sample_size)
     if _global_shap_cache is not None:
         return _global_shap_cache
 
@@ -407,6 +438,7 @@ def global_shap_importance(sample_size: int = 500) -> np.ndarray:
         contrib = arr
 
     _global_shap_cache = np.mean(np.abs(contrib), axis=0)
+    _save_global("shap", sample_size, _global_shap_cache)
     return _global_shap_cache
 
 
@@ -416,9 +448,11 @@ def global_lime_importance(sample_size: int = 40) -> np.ndarray:
     explanations over a random background sample. Unlike SHAP (one fast
     batched call), LIME retrains a local surrogate per instance, so the
     sample stays small to keep the admin analytics page responsive.
-    Cached after the first computation.
+    Cached after the first computation (in memory and in outputs/).
     """
     global _global_lime_cache
+    if _global_lime_cache is None:
+        _global_lime_cache = _load_global("lime", sample_size)
     if _global_lime_cache is not None:
         return _global_lime_cache
 
@@ -447,4 +481,5 @@ def global_lime_importance(sample_size: int = 40) -> np.ndarray:
     _global_lime_cache = np.divide(
         totals, counts, out=np.zeros_like(totals), where=counts > 0,
     )
+    _save_global("lime", sample_size, _global_lime_cache)
     return _global_lime_cache

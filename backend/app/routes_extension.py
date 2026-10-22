@@ -13,6 +13,7 @@ from .phishing_type import detect_phishing_type
 from .pipeline import evaluate
 from .models import BlockedURL, Detection, ExtensionReport, User, UserBlockedURL
 from .schemas import ExtensionReportCreate, ExtensionReportOut
+from .score_view import TRUSTED_SCORE
 
 
 router = APIRouter(
@@ -75,12 +76,14 @@ def extension_scan(
                 user_id=user.id, url=url, prediction="legitimate", label=0,
                 confidence=1.0, phishing_probability=0.0, risk_level="Low",
                 model_used="TrustedAllowlist", ip_address=ip, source="extension",
+                risk_score=0.0, score_confidence=1.0,
             ))
             db.commit()
         return {
             "url": url,
             "prediction": "legitimate",
             "confidence": 1.0,
+            "score": TRUSTED_SCORE,
             "phishing_probability": 0.0,
             "legitimate_probability": 1.0,
             "risk_level": "Low",
@@ -118,6 +121,8 @@ def extension_scan(
                 risk_level=risk, model_used=model_info()["name"],
                 attack_type=attack_type["category"] if attack_type else None,
                 ip_address=ip, source="extension",
+                risk_score=verdict["score"]["risk_score"],
+                score_confidence=verdict["score"]["confidence"],
             ))
             db.commit()
 
@@ -146,6 +151,7 @@ def extension_scan(
             "stage2": verdict["stage2"],
             "checked_url": checked_url,
             "reputation": verdict["reputation"],
+            "score": verdict["score"],
             "attack_type": attack_type,
         }
 
@@ -311,6 +317,23 @@ def sync_user_blocks(
 # Anonymous Extension Report
 # ==========================================================
 
+def _open_report(db: Session, url: str):
+    """The URL's extension report that still stands: pending or approved.
+    A rejected report is deleted (legacy rows say "rejected"), so the URL
+    can be reported again."""
+    return (
+        db.query(ExtensionReport)
+        .filter(ExtensionReport.url == url, ExtensionReport.status != "rejected")
+        .first()
+    )
+
+
+@router.get("/report-status")
+def report_status(url: str, db: Session = Depends(get_db)):
+    """Lets the warning page show "Reported" for a URL already reported."""
+    return {"reported": _open_report(db, url) is not None}
+
+
 @router.post(
     "/report",
     response_model=ExtensionReportOut,
@@ -322,13 +345,7 @@ def extension_report(
     user: Optional[User] = Depends(try_current_user),
 ):
 
-    existing = (
-        db.query(ExtensionReport)
-        .filter(
-            ExtensionReport.url == payload.url
-        )
-        .first()
-    )
+    existing = _open_report(db, payload.url)
 
 
     if existing:

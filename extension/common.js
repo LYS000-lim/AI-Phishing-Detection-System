@@ -10,6 +10,8 @@ function pgRecommendation(category) {
             "Do not provide personal information or make any payment.",
         "Tech Support / Malware Scam":
             "Do not download or install anything from this site, and do not call any phone number shown.",
+        "Brand Impersonation":
+            "Verify you are on the brand's official domain before entering any information.",
         "Domain Spoofing / Brand Impersonation":
             "Verify you are on the brand's official domain before entering any information.",
     };
@@ -75,6 +77,10 @@ function pgAttackDescription(category) {
             "Promises prizes, rewards or free items to trick you into sharing data or paying a fee.",
         "Tech Support / Malware Scam":
             "Shows fake security alerts or downloads to install malware or get you to call scammers.",
+        "Brand Impersonation":
+            "Uses a well-known brand name, or a look-alike spelling of it, on a domain the brand does not own.",
+        "General Phishing":
+            "The address looks like phishing but does not match one specific attack type.",
         "Domain Spoofing / Brand Impersonation":
             "Uses a well-known brand name on a domain the brand does not own, to look trustworthy.",
     };

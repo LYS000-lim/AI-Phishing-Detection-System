@@ -20,14 +20,17 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 // A notice is only shown on the website it was scanned for ("www." aside),
-// never on the next page opened in the same tab.
+// or the website that address redirected to, never on the next page
+// opened in the same tab.
 function isForThisPage(data) {
     if (!data?.url) {
         return false;
     }
     try {
         const host = (h) => h.toLowerCase().replace(/^www\./, "");
-        return host(new URL(data.url).hostname) === host(location.hostname);
+        const here = host(location.hostname);
+        return host(new URL(data.url).hostname) === here
+            || (!!data.redirectedTo && host(data.redirectedTo) === here);
     } catch {
         return false;
     }
@@ -125,6 +128,7 @@ function showSafeToast(data) {
 
         const rows = [
             ["Website", data.url],
+            ...(data.redirectedTo ? [["Redirected to", data.redirectedTo]] : []),
             ["Status", "Safe"],
             ["Verification", data.verification || "AI Detection Model"],
         ];
@@ -202,6 +206,7 @@ function showUncertainToast(data) {
 
         const rows = [
             ["Website", data.url],
+            ...(data.redirectedTo ? [["Redirected to", data.redirectedTo]] : []),
             ["Status", "Low-confidence result – not confirmed phishing"],
             ["Reason", data.reason || "Missing HTTPS connection."],
         ];
