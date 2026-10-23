@@ -425,6 +425,35 @@ body {
     margin-top: 4px;
 }
 
+.pg-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #1f2937;
+}
+
+.pg-pager[hidden] {
+    display: none;
+}
+
+.pg-pager .pg-btn {
+    width: auto;
+    margin-top: 0;
+}
+
+.pg-pager .pg-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.pg-pager span {
+    color: #94a3b8;
+    font-size: 13px;
+}
+
 .pg-toggle-options button {
     width: auto;
 }

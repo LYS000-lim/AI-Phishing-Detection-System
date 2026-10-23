@@ -1,3 +1,6 @@
+const PG_PAGE_SIZE = 10;
+let pgPage = 1;
+
 async function render() {
     const store = await chrome.storage.local.get([
         "detectionHistory",
@@ -7,6 +10,7 @@ async function render() {
     const history = store.detectionHistory || [];
     const subtitle = document.getElementById("pg-history-subtitle");
     const list = document.getElementById("pg-history-list");
+    const pager = document.getElementById("pg-history-pager");
 
     if (!store.historyRecordingEnabled) {
         subtitle.textContent =
@@ -17,10 +21,16 @@ async function render() {
 
     if (!history.length) {
         list.innerHTML = `<div class="pg-empty">No detection history yet.</div>`;
+        pager.hidden = true;
         return;
     }
 
+    const totalPages = Math.ceil(history.length / PG_PAGE_SIZE);
+    pgPage = Math.min(Math.max(pgPage, 1), totalPages);
+    const start = (pgPage - 1) * PG_PAGE_SIZE;
+
     list.innerHTML = history
+        .slice(start, start + PG_PAGE_SIZE)
         .map((entry) => {
             const isPhishing = entry.prediction === "phishing";
             const isUncertain = entry.prediction === "uncertain";
@@ -43,6 +53,21 @@ async function render() {
             `;
         })
         .join("");
+
+    pager.hidden = totalPages <= 1;
+    document.getElementById("pg-page-info").textContent =
+        `Page ${pgPage} of ${totalPages} (${start + 1}–${Math.min(start + PG_PAGE_SIZE, history.length)} of ${history.length})`;
+    document.getElementById("pg-prev").disabled = pgPage === 1;
+    document.getElementById("pg-next").disabled = pgPage === totalPages;
 }
+
+function pgGoTo(page) {
+    pgPage = page;
+    render();
+    window.scrollTo(0, 0);
+}
+
+document.getElementById("pg-prev").addEventListener("click", () => pgGoTo(pgPage - 1));
+document.getElementById("pg-next").addEventListener("click", () => pgGoTo(pgPage + 1));
 
 render();
