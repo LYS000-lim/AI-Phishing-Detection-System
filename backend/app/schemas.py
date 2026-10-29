@@ -238,6 +238,10 @@ class ExtensionReportCreate(BaseModel):
     detection_reason: Optional[str] = None
     browser_info: Optional[str] = None
 
+    # Same check as the scanner: without it any text ("report",
+    # "x AND 1=1 --") was accepted and queued for the administrator.
+    _check_url = field_validator("url")(_validate_url)
+
 
 class ExtensionReportOut(BaseModel):
     id: int

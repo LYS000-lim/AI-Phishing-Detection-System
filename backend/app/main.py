@@ -44,6 +44,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Security headers on every response (found missing by the OWASP ZAP scan).
+# The API only returns JSON, so its CSP allows nothing; the Swagger docs
+# load scripts from a CDN, so they only get the anti-framing rule.
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    docs = request.url.path.startswith(("/docs", "/redoc"))
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "frame-ancestors 'none'" if docs else "default-src 'none'; frame-ancestors 'none'",
+    )
+    return response
+
 # Ensure SQLite tables exist on boot.
 init_db()
 
